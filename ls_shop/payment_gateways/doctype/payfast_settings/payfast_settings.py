@@ -155,7 +155,8 @@ class PayfastSettings(Document):
 		if self.return_url:
 			form_data["return_url"] = self.return_url
 		else:
-			form_data["return_url"] = f"{base_url}/payment-success?payment_mode=payfast&payment_id={payment_request_doc.name}"
+			# Use confirmation page with proper parameters for consistency
+			form_data["return_url"] = f"{base_url}/account/orders/confirmation?payment_mode=payfast&reference_id={payment_request_doc.m_payment_id or payment_request_doc.name}&payment_request={payment_request_doc.name}"
 		
 		if self.cancel_url:
 			form_data["cancel_url"] = self.cancel_url

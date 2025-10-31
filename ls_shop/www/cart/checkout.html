@@ -530,7 +530,7 @@
                             console.log('[Yoco] Payment processing response:', response);
                             if (response && response.data) {
                                 // Modal already closed, just redirect
-                                const redirectUrl = response.data.redirect_to || '/{{frappe.lang}}/account/orders/confirmation?payment_request=' + alpineData.yoco_payment_data.payment_request_name;
+                                const redirectUrl = response.data.redirect_to || '/{{frappe.lang}}/account/orders/confirmation?payment_mode=yoco&reference_id=' + alpineData.yoco_payment_data.payment_request_name + '&payment_request=' + alpineData.yoco_payment_data.payment_request_name;
                                 window.location.href = redirectUrl;
                             } else {
                                 if (typeof frappe !== 'undefined' && frappe.show_alert) {
@@ -1066,7 +1066,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                         console.log('[Yoco] Payment processing response:', response);
                                         if (response && response.data) {
                                             alpineData.show_yoco_modal = false;
-                                            window.location.href = response.data.redirect_to || '/{{frappe.lang}}/account/orders/confirmation?payment_request=' + alpineData.yoco_payment_data.payment_request_name;
+                                            window.location.href = response.data.redirect_to || '/{{frappe.lang}}/account/orders/confirmation?payment_mode=yoco&reference_id=' + alpineData.yoco_payment_data.payment_request_name + '&payment_request=' + alpineData.yoco_payment_data.payment_request_name;
                                         } else {
                                             if (typeof frappe !== 'undefined' && frappe.show_alert) {
                                                 frappe.show_alert({

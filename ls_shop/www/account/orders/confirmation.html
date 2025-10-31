@@ -7,25 +7,58 @@
 </div>
 
 <script defer>
-    const urlParams = new URLSearchParams(window.location.search);
-    let payment_mode = urlParams.get('payment_mode');
-    const payment_id = urlParams.get('payment_id');
-    let reference_id = urlParams.get('reference_id');
-    if (!payment_mode) {
-        payment_mode = 'tabby'
-    }
-    if(!reference_id){
-        reference_id = payment_id
-    }
-    frappe_call(
-        "/api/v2/method/ls_shop.api.payments.confirm_payment",
-        { payment_mode, reference_id }
-    ).then(({ data }) => {
-        // TODO: handle errors, unpaid, etc.
-        if (data.status === "Paid" || data.status === "CLOSED") {
-            Alpine.store("cart").remove_selected();
-            window.location.href = `/{{frappe.lang}}/account/orders`;
+    (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        let payment_mode = urlParams.get('payment_mode');
+        const payment_id = urlParams.get('payment_id');
+        const payment_request = urlParams.get('payment_request');
+        let reference_id = urlParams.get('reference_id');
+        
+        // payment_request parameter is used by Yoco/Payfast redirects
+        if (!reference_id && payment_request) {
+            reference_id = payment_request;
         }
-    })
+        
+        // payment_id is used by Tabby
+        if (!reference_id && payment_id) {
+            reference_id = payment_id;
+        }
+        
+        // Validate required parameters
+        if (!payment_mode) {
+            console.error('Payment mode is required but not found in URL parameters');
+            frappe.show_alert({
+                message: __('Payment mode is missing. Please contact support.'),
+                indicator: 'red'
+            }, 5);
+            return;
+        }
+        
+        if (!reference_id) {
+            console.error('Reference ID is required but not found in URL parameters');
+            frappe.show_alert({
+                message: __('Payment reference is missing. Please contact support.'),
+                indicator: 'red'
+            }, 5);
+            return;
+        }
+        
+        frappe_call(
+            "/api/v2/method/ls_shop.api.payments.confirm_payment",
+            { payment_mode, reference_id }
+        ).then(({ data }) => {
+            // TODO: handle errors, unpaid, etc.
+            if (data.status === "Paid" || data.status === "CLOSED") {
+                Alpine.store("cart").remove_selected();
+                window.location.href = `/{{frappe.lang}}/account/orders`;
+            }
+        }).catch((error) => {
+            console.error('Payment confirmation error:', error);
+            frappe.show_alert({
+                message: __('Failed to confirm payment. Please contact support.'),
+                indicator: 'red'
+            }, 5);
+        });
+    })();
 </script>
 {% endblock %}

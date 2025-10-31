@@ -414,7 +414,7 @@ def update_quotation_address(address: dict):
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(allow_guest=True)
 def confirm_payment(payment_mode: PaymentMode, reference_id: str):
 	if payment_mode == payment_mode.COD:
 		submit_quotation_and_create_order(reference_id, payment_mode)
@@ -446,7 +446,9 @@ def confirm_payment(payment_mode: PaymentMode, reference_id: str):
 
 		if payment_request.status == "Paid":
 			quote_name = payment_request.ref_docname
-			submit_quotation_and_create_order(quote_name, payment_mode, payment_request.yoco_charge_id or payment_request.yoco_order_id)
+			# Use yoco_charge_id first (where token is stored), fallback to yoco_order_id
+			payment_reference = payment_request.yoco_charge_id or payment_request.yoco_order_id or str(payment_request.name)
+			submit_quotation_and_create_order(quote_name, payment_mode, payment_reference)
 		return payment_request
 
 	if payment_mode == PaymentMode.PAYFAST:
@@ -488,7 +490,7 @@ def submit_quotation_and_create_order(
 			payment_order_ref_field = "tabby_order_ref"
 		elif payment_mode == PaymentMode.YOCO:
 			payment_request_doctype = "Yoco Payment Request"
-			payment_order_ref_field = "yoco_order_id"
+			payment_order_ref_field = "yoco_charge_id"
 		elif payment_mode == PaymentMode.PAYFAST:
 			payment_request_doctype = "Payfast Payment Request"
 			payment_order_ref_field = "m_payment_id"

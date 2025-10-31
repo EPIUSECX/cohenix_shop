@@ -173,7 +173,7 @@
 			"name": "Sales Order-custom_ecommerce_payment_mode",
 			"no_copy": 0,
 			"non_negative": 0,
-			"options": "Telr\nTabby\nCOD",
+			"options": "Telr\nTabby\nYoco\nPayfast\nCOD",
 			"owner": "Administrator",
 			"permlevel": 0,
 			"placeholder": null,
