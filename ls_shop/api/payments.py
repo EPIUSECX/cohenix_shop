@@ -442,6 +442,7 @@ def confirm_payment(payment_mode: PaymentMode, reference_id: str):
 
 	if payment_mode == PaymentMode.YOCO:
 		payment_request = frappe.get_doc("Yoco Payment Request", int(reference_id))
+		payment_request.flags.ignore_permissions = True
 		payment_request.sync_status()
 
 		if payment_request.status == "Paid":
@@ -453,6 +454,7 @@ def confirm_payment(payment_mode: PaymentMode, reference_id: str):
 
 	if payment_mode == PaymentMode.PAYFAST:
 		payment_request = frappe.get_doc("Payfast Payment Request", {"m_payment_id": reference_id})
+		payment_request.flags.ignore_permissions = True
 		payment_request.sync_status()
 
 		if payment_request.status == "Complete":
@@ -465,12 +467,45 @@ def confirm_payment(payment_mode: PaymentMode, reference_id: str):
 def submit_quotation_and_create_order(
 	quote_name: str, payment_mode: PaymentMode, payment_reference: str = ""
 ):
-	session_user = frappe.session.user
-	quotation_doc = frappe.get_doc("Quotation", quote_name)
-	if payment_mode == payment_mode.COD:
-		set_cod_charges(quotation_doc)
-	quotation_doc.flags.ignore_permissions = True
-	quotation_doc.submit()
+	# Store ORIGINAL user at the very beginning - this is critical for session restoration
+	original_session_user = frappe.session.user
+	
+	# Get quotation - if PermissionError, authenticate as the quotation owner
+	# This handles cases where payment redirect returns as Guest user
+	quotation_doc = None
+	quotation_user_changed = False
+	
+	try:
+		quotation_doc = frappe.get_doc("Quotation", quote_name)
+	except frappe.PermissionError:
+		# If permission denied, authenticate as the quotation owner
+		owner = frappe.db.get_value("Quotation", quote_name, "owner")
+		if owner and owner != "Administrator" and owner != original_session_user:
+			frappe.set_user(owner)
+			quotation_user_changed = True
+			try:
+				quotation_doc = frappe.get_doc("Quotation", quote_name)
+			except frappe.PermissionError:
+				# Still fails, use ignore_permissions
+				quotation_doc = frappe.get_doc("Quotation", quote_name)
+				quotation_doc.flags.ignore_permissions = True
+		else:
+			# Use ignore_permissions as fallback
+			quotation_doc = frappe.get_doc("Quotation", quote_name)
+			quotation_doc.flags.ignore_permissions = True
+	
+	# Set ignore_permissions for submit if not already set
+	if not quotation_doc.flags.ignore_permissions:
+		quotation_doc.flags.ignore_permissions = True
+	
+	try:
+		if payment_mode == payment_mode.COD:
+			set_cod_charges(quotation_doc)
+		quotation_doc.submit()
+	finally:
+		# Restore to original user after quotation operations
+		if quotation_user_changed:
+			frappe.set_user(original_session_user)
 
 	so = _make_sales_order(quote_name, ignore_permissions=True)
 	so.custom_ecommerce_payment_mode = (
@@ -506,13 +541,20 @@ def submit_quotation_and_create_order(
 			payment_request.ref_docname = so.name
 			payment_request.ref_doctype = "Sales Order"
 			payment_request.save()
-		frappe.set_user("Administrator")
-		pe = get_payment_entry("Sales Order", so.name, reference_date=frappe.utils.today())
-		pe.flags.ignore_permissions = True
-		pe.mode_of_payment = payment_mode.title()
-		pe.reference_no = payment_reference
-		pe.insert().submit()
-	frappe.session.user = session_user
+		
+		# Create Payment Entry as Administrator (required for proper accounting)
+		# Store current user before changing to Administrator
+		payment_entry_user = frappe.session.user
+		try:
+			frappe.set_user("Administrator")
+			pe = get_payment_entry("Sales Order", so.name, reference_date=frappe.utils.today())
+			pe.flags.ignore_permissions = True
+			pe.mode_of_payment = payment_mode.title()
+			pe.reference_no = payment_reference
+			pe.insert().submit()
+		finally:
+			# Always restore to ORIGINAL session user, not the intermediate one
+			frappe.set_user(original_session_user)
 
 
 @frappe.whitelist()

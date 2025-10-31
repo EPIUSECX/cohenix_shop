@@ -1,15 +1,118 @@
 {% macro tabby(selector='tabby-promo',price=100) %}
 
-<script src="https://checkout.tabby.ai/tabby-promo.js"></script>
 <script defer>
-    new TabbyPromo({
-     selector: '#{{selector}}', // required, content of tabby Promo Snippet will be placed in element with that selector.
-     currency: 'SAR', // required, AED|SAR|KWD only supported, with no spaces or lowercase.
-     price: '{{price}}', // required, price of the product. 2 decimals max for AED|SAR and 3 decimals max for KWD.
-     lang: '{{ frappe.lang }}', // Optional, en|ar only supported
-     source: 'product', // Optional, snippet placement; `product` for product page and `cart` for cart page.
-     productType: 'installments'
-   });
+    // Only load Tabby script when Tabby payment mode is actually selected
+    // This prevents unnecessary API calls when using other payment gateways
+    function loadTabbyScript() {
+        // Check if script already loaded
+        if (document.querySelector('script[src="https://checkout.tabby.ai/tabby-promo.js"]')) {
+            initializeTabbyPromo();
+            return;
+        }
+        
+        // Check if Tabby payment mode is selected before loading script
+        const tabbyRadio = document.querySelector('input[type="radio"][value="tabby"]');
+        if (!tabbyRadio || !tabbyRadio.checked) {
+            // Tabby not selected, don't load script
+            return;
+        }
+        
+        // Dynamically load Tabby script only when needed
+        const script = document.createElement('script');
+        script.src = 'https://checkout.tabby.ai/tabby-promo.js';
+        script.onload = function() {
+            initializeTabbyPromo();
+        };
+        script.onerror = function() {
+            console.warn('Failed to load Tabby promo script');
+        };
+        document.head.appendChild(script);
+    }
+    
+    function initializeTabbyPromo() {
+        // Only initialize if TabbyPromo is available and selector element exists and is visible
+        if (typeof TabbyPromo !== 'undefined') {
+            const selectorElement = document.querySelector('#{{selector}}');
+            if (selectorElement) {
+                // Use MutationObserver to detect when element becomes visible (x-show)
+                const observer = new MutationObserver(function(mutations) {
+                    if (selectorElement.offsetParent !== null) {
+                        // Element is visible, initialize Tabby
+                        try {
+                            // Clear any existing content
+                            selectorElement.innerHTML = '';
+                            new TabbyPromo({
+                                selector: '#{{selector}}',
+                                currency: 'SAR',
+                                price: '{{price}}',
+                                lang: '{{ frappe.lang }}',
+                                source: 'product',
+                                productType: 'installments'
+                            });
+                        } catch (e) {
+                            console.warn('Tabby promo initialization failed:', e);
+                        }
+                        observer.disconnect();
+                    }
+                });
+                
+                // Start observing
+                observer.observe(selectorElement.parentElement || document.body, {
+                    attributes: true,
+                    attributeFilter: ['style', 'class'],
+                    childList: false,
+                    subtree: true
+                });
+                
+                // Also check immediately if already visible
+                if (selectorElement.offsetParent !== null) {
+                    try {
+                        selectorElement.innerHTML = '';
+                        new TabbyPromo({
+                            selector: '#{{selector}}',
+                            currency: 'SAR',
+                            price: '{{price}}',
+                            lang: '{{ frappe.lang }}',
+                            source: 'product',
+                            productType: 'installments'
+                        });
+                    } catch (e) {
+                        console.warn('Tabby promo initialization failed:', e);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Wait for DOM to be ready, then check payment mode
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            // Also listen for payment mode changes
+            const paymentModeInputs = document.querySelectorAll('input[name="payment_mode"]');
+            paymentModeInputs.forEach(input => {
+                input.addEventListener('change', function() {
+                    if (this.value === 'tabby' && this.checked) {
+                        loadTabbyScript();
+                    }
+                });
+            });
+            
+            // Check if Tabby is already selected on page load
+            setTimeout(loadTabbyScript, 100);
+        });
+    } else {
+        // DOM already ready
+        const paymentModeInputs = document.querySelectorAll('input[name="payment_mode"]');
+        paymentModeInputs.forEach(input => {
+            input.addEventListener('change', function() {
+                if (this.value === 'tabby' && this.checked) {
+                    loadTabbyScript();
+                }
+            });
+        });
+        
+        setTimeout(loadTabbyScript, 100);
+    }
 </script>
 <div class="min-h-[98px]" id="{{selector}}"></div>
 

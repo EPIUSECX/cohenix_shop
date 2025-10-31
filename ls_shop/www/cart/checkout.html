@@ -127,19 +127,28 @@
             // Update Tabby price on delivery charge update
             update_tabby_promo(total) {
                 if (this.payment_mode !== 'tabby') return;
+                // Check if TabbyPromo is loaded before trying to use it
+                if (typeof TabbyPromo === 'undefined') {
+                    console.warn('TabbyPromo not loaded - skipping promo update');
+                    return;
+                }
                 const tabby_element_ids = ['tabby-promo-mobile', 'tabby-promo-desktop'];
                 tabby_element_ids.forEach(id => {
                     const element = document.getElementById(id);
-                    if (element) {
-                        element.innerHTML = '';
-                        new TabbyPromo({
-                            selector: `#${id}`,
-                            currency: 'SAR',
-                            price: total.toFixed(2),
-                            lang: '{{ frappe.lang }}',
-                            source: 'product',
-                            productType: 'installments'
-                        });
+                    if (element && element.offsetParent !== null) {
+                        try {
+                            element.innerHTML = '';
+                            new TabbyPromo({
+                                selector: `#${id}`,
+                                currency: 'SAR',
+                                price: total.toFixed(2),
+                                lang: '{{ frappe.lang }}',
+                                source: 'product',
+                                productType: 'installments'
+                            });
+                        } catch (e) {
+                            console.warn('Tabby promo update failed:', e);
+                        }
                     }
                 });
             },

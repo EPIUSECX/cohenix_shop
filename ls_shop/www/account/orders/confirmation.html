@@ -7,58 +7,130 @@
 </div>
 
 <script defer>
+    // Wait for frappe to be available
     (function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        let payment_mode = urlParams.get('payment_mode');
-        const payment_id = urlParams.get('payment_id');
-        const payment_request = urlParams.get('payment_request');
-        let reference_id = urlParams.get('reference_id');
-        
-        // payment_request parameter is used by Yoco/Payfast redirects
-        if (!reference_id && payment_request) {
-            reference_id = payment_request;
-        }
-        
-        // payment_id is used by Tabby
-        if (!reference_id && payment_id) {
-            reference_id = payment_id;
-        }
-        
-        // Validate required parameters
-        if (!payment_mode) {
-            console.error('Payment mode is required but not found in URL parameters');
-            frappe.show_alert({
-                message: __('Payment mode is missing. Please contact support.'),
-                indicator: 'red'
-            }, 5);
-            return;
-        }
-        
-        if (!reference_id) {
-            console.error('Reference ID is required but not found in URL parameters');
-            frappe.show_alert({
-                message: __('Payment reference is missing. Please contact support.'),
-                indicator: 'red'
-            }, 5);
-            return;
-        }
-        
-        frappe_call(
-            "/api/v2/method/ls_shop.api.payments.confirm_payment",
-            { payment_mode, reference_id }
-        ).then(({ data }) => {
-            // TODO: handle errors, unpaid, etc.
-            if (data.status === "Paid" || data.status === "CLOSED") {
-                Alpine.store("cart").remove_selected();
-                window.location.href = `/{{frappe.lang}}/account/orders`;
+        function initConfirmation() {
+            // Check if frappe is available
+            if (typeof frappe === 'undefined' || typeof frappe_call === 'undefined') {
+                setTimeout(initConfirmation, 100);
+                return;
             }
-        }).catch((error) => {
-            console.error('Payment confirmation error:', error);
-            frappe.show_alert({
-                message: __('Failed to confirm payment. Please contact support.'),
-                indicator: 'red'
-            }, 5);
-        });
+            
+            const urlParams = new URLSearchParams(window.location.search);
+            let payment_mode = urlParams.get('payment_mode');
+            const payment_id = urlParams.get('payment_id');
+            const payment_request = urlParams.get('payment_request');
+            let reference_id = urlParams.get('reference_id');
+            
+            // payment_request parameter is used by Yoco/Payfast redirects
+            if (!reference_id && payment_request) {
+                reference_id = payment_request;
+            }
+            
+            // payment_id is used by Tabby
+            if (!reference_id && payment_id) {
+                reference_id = payment_id;
+            }
+            
+            // Validate required parameters
+            if (!payment_mode) {
+                console.error('Payment mode is required but not found in URL parameters');
+                if (frappe && frappe.show_alert) {
+                    frappe.show_alert({
+                        message: __('Payment mode is missing. Please contact support.'),
+                        indicator: 'red'
+                    }, 5);
+                }
+                return;
+            }
+            
+            if (!reference_id) {
+                console.error('Reference ID is required but not found in URL parameters');
+                if (frappe && frappe.show_alert) {
+                    frappe.show_alert({
+                        message: __('Payment reference is missing. Please contact support.'),
+                        indicator: 'red'
+                    }, 5);
+                }
+                return;
+            }
+            
+            frappe_call(
+                "/api/v2/method/ls_shop.api.payments.confirm_payment",
+                { payment_mode, reference_id }
+            ).then((response) => {
+                console.log('[Payment Confirmation] Full response:', response);
+                const data = response.data || response;
+                console.log('[Payment Confirmation] Data:', data);
+                console.log('[Payment Confirmation] Status:', data?.status);
+                
+                // Handle all valid payment success statuses
+                const successStatuses = ["Paid", "CLOSED", "AUTHORIZED", "Complete"];
+                const paymentStatus = data?.status || (data && typeof data === 'object' && data.status);
+                
+                console.log('[Payment Confirmation] Payment status:', paymentStatus);
+                console.log('[Payment Confirmation] Is success?', successStatuses.includes(paymentStatus));
+                
+                if (data && successStatuses.includes(paymentStatus)) {
+                    console.log('[Payment Confirmation] Payment successful, redirecting...');
+                    // Clear cart if Alpine is available
+                    if (typeof Alpine !== 'undefined' && Alpine.store && Alpine.store("cart")) {
+                        try {
+                            Alpine.store("cart").remove_selected();
+                        } catch (e) {
+                            console.warn('Could not clear cart:', e);
+                        }
+                    }
+                    // Redirect to orders page immediately
+                    window.location.href = `/{{frappe.lang}}/account/orders`;
+                } else {
+                    // Payment not successful or status unknown
+                    console.warn('[Payment Confirmation] Payment status not in success list:', paymentStatus);
+                    console.warn('[Payment Confirmation] Full data object:', JSON.stringify(data, null, 2));
+                    
+                    // If we have a payment request with Paid status, treat as success anyway
+                    if (data && (data.status === "Paid" || data.status === "Complete")) {
+                        console.log('[Payment Confirmation] Treating as success based on status');
+                        window.location.href = `/{{frappe.lang}}/account/orders`;
+                    } else {
+                        // Show message but still redirect after delay
+                        if (frappe && frappe.show_alert) {
+                            frappe.show_alert({
+                                message: __('Payment confirmation completed. Redirecting to orders...'),
+                                indicator: 'orange'
+                            }, 2);
+                        }
+                        // Still redirect to orders page to see status
+                        setTimeout(() => {
+                            console.log('[Payment Confirmation] Redirecting after timeout');
+                            window.location.href = `/{{frappe.lang}}/account/orders`;
+                        }, 1500);
+                    }
+                }
+            }).catch((error) => {
+                console.error('[Payment Confirmation] Error:', error);
+                console.error('[Payment Confirmation] Error details:', JSON.stringify(error, null, 2));
+                
+                // Even on error, redirect to orders page so user can see status
+                if (frappe && frappe.show_alert) {
+                    frappe.show_alert({
+                        message: __('Payment processing may have completed. Redirecting to orders...'),
+                        indicator: 'orange'
+                    }, 2);
+                }
+                setTimeout(() => {
+                    console.log('[Payment Confirmation] Redirecting after error');
+                    window.location.href = `/{{frappe.lang}}/account/orders`;
+                }, 1500);
+            });
+        }
+        
+        // Start initialization when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initConfirmation);
+        } else {
+            initConfirmation();
+        }
     })();
 </script>
 {% endblock %}
