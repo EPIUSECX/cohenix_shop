@@ -73,6 +73,11 @@
             checkout_total: parseFloat('{{cart_quotation.net_total or 0}}') + parseFloat('{{delivery_charge or 0}}') + parseFloat('{{cart_quotation.rounding_adjustment or 0}}'),
             delivery_charge_applicable_below: parseFloat('{{delivery_charge_applicable_below or 0}}'),
             delivery_charge: parseFloat('{{delivery_charge or 0}}'),
+            // Modal states
+            show_yoco_modal: false,
+            show_payfast_modal: false,
+            yoco_payment_data: null,  // Will be set when payment details are loaded
+            payfast_form_data: null,
 
 
             init() {
@@ -215,8 +220,49 @@
             }
 
             if (state.payment_mode === "yoco") {
-                if (data?.payment_request?.yoco_order_url) {
-                    window.location.href = data["payment_request"]["yoco_order_url"]
+                if (data?.payment_request?.name) {
+                    // Fetch Yoco payment details for modal
+                    // Ensure payment_request_name is a string
+                    const paymentRequestName = String(data["payment_request"]["name"]);
+                    frappe_call(
+                        "/api/v2/method/ls_shop.api.payments.get_yoco_payment_details",
+                        { payment_request_name: paymentRequestName }
+                    ).then(response => {
+                        console.log('[Yoco] API Response:', response);
+                        // Handle both possible response structures
+                        const paymentData = response?.data?.message || response?.message || response?.data;
+                        console.log('[Yoco] Payment data:', paymentData);
+                        state.yoco_payment_data = paymentData;
+                        state.show_yoco_modal = true;
+                        console.log('[Yoco] Modal state updated:', {
+                            show_yoco_modal: state.show_yoco_modal,
+                            yoco_payment_data: state.yoco_payment_data
+                        });
+                        // Small delay to ensure Alpine reactivity
+                        setTimeout(() => {
+                            console.log('[Yoco] State after delay:', {
+                                show_yoco_modal: state.show_yoco_modal,
+                                has_data: !!state.yoco_payment_data,
+                                data: state.yoco_payment_data
+                            });
+                        }, 100);
+                        btn.disabled = false;
+                        spinner.classList.add("hidden");
+                        // Load Yoco SDK if not already loaded
+                        if (typeof YocoSDK === 'undefined') {
+                            const script = document.createElement('script');
+                            script.src = 'https://js.yoco.com/sdk/v1/yoco-sdk-web.js';
+                            script.onload = () => {
+                                // SDK loaded, modal will initialize payment
+                            };
+                            document.head.appendChild(script);
+                        }
+                    }).catch(err => {
+                        console.error('Error getting Yoco payment details:', err);
+                        toast('Failed to load payment details. Please try again.', { type: "danger" });
+                        btn.disabled = false;
+                        spinner.classList.add("hidden");
+                    });
                 }
             }
 
@@ -228,22 +274,20 @@
                         "/api/v2/method/ls_shop.lifestyle_shop_ecommerce.doctype.payfast_payment_request.payfast_payment_request.get_payment_form",
                         { name: data["payment_request"]["name"] }
                     ).then(response => {
-                        const formData = response.data.message;
-                        // Create and submit form to Payfast
-                        const form = document.createElement('form');
-                        form.method = 'POST';
-                        form.action = formData.payfast_url;
-                        Object.keys(formData.form_data).forEach(key => {
-                            const input = document.createElement('input');
-                            input.type = 'hidden';
-                            input.name = key;
-                            input.value = formData.form_data[key];
-                            form.appendChild(input);
-                        });
-                        document.body.appendChild(form);
-                        form.submit();
+                        state.payfast_form_data = response.data.message;
+                        state.show_payfast_modal = true;
+                        btn.disabled = false;
+                        spinner.classList.add("hidden");
+                        // Auto-submit form in iframe after a short delay
+                        setTimeout(() => {
+                            const payfastForm = document.getElementById('payfast-payment-form');
+                            if (payfastForm) {
+                                payfastForm.submit();
+                            }
+                        }, 100);
                     }).catch(err => {
                         console.error('Error getting Payfast form:', err);
+                        toast('Failed to load payment form. Please try again.', { type: "danger" });
                         btn.disabled = false;
                         spinner.classList.add("hidden");
                     });
@@ -393,6 +437,145 @@
             return;
         }
         add_billing_address(state, refs)
+    }
+    
+    // Handle Yoco payment button click
+    function handleYocoPaymentClick(button) {
+        const stateElement = document.querySelector('[x-data*="checkout_state"]');
+        if (!stateElement) {
+            console.error('[Yoco] Cannot find checkout state element');
+            return;
+        }
+        
+        const alpineData = Alpine.$data(stateElement);
+        if (!alpineData || !alpineData.yoco_payment_data) {
+            console.error('[Yoco] Payment data not available');
+            if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                frappe.show_alert({
+                    message: 'Payment details not loaded. Please try again.',
+                    indicator: 'red'
+                });
+            }
+            return;
+        }
+        
+        if (typeof YocoSDK === 'undefined') {
+            console.error('[Yoco] Yoco SDK not loaded');
+            if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                frappe.show_alert({
+                    message: 'Payment system loading. Please wait...',
+                    indicator: 'orange'
+                });
+            }
+            return;
+        }
+        
+        // Disable button during processing
+        button.disabled = true;
+        button.textContent = 'Processing...';
+        
+        // Close the modal so Yoco popup is visible
+        alpineData.show_yoco_modal = false;
+        
+        try {
+            const yoco = new YocoSDK({
+                publicKey: alpineData.yoco_payment_data.public_key
+            });
+            
+            const paymentMethods = ['card', 'googlePay', 'instantEFT'];
+            if (alpineData.yoco_payment_data.enable_apple_pay && alpineData.yoco_payment_data.apple_pay_merchant_id) {
+                paymentMethods.push('applePay');
+            }
+            
+            const popupConfig = {
+                amountInCents: parseInt(alpineData.yoco_payment_data.amount * 100),
+                currency: alpineData.yoco_payment_data.currency,
+                name: alpineData.yoco_payment_data.title,
+                description: alpineData.yoco_payment_data.description,
+                paymentMethods: paymentMethods,
+                metadata: {
+                    payment_request: alpineData.yoco_payment_data.payment_request_name,
+                    reference_doctype: alpineData.yoco_payment_data.reference_doctype,
+                    reference_docname: alpineData.yoco_payment_data.reference_docname
+                },
+                callback: function(result) {
+                    button.disabled = false;
+                    button.textContent = 'Pay with Yoco';
+                    
+                    if (result.error) {
+                        console.error('[Yoco] Payment error:', result.error);
+                        // Reopen modal if payment failed/cancelled
+                        alpineData.show_yoco_modal = true;
+                        if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                            frappe.show_alert({
+                                message: result.error.message || 'Payment failed. Please try again.',
+                                indicator: 'red'
+                            });
+                        } else {
+                            alert('Payment failed: ' + (result.error.message || 'Unknown error'));
+                        }
+                    } else {
+                        console.log('[Yoco] Payment token received:', result.id);
+                        if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                            frappe.show_alert({
+                                message: 'Processing payment...',
+                                indicator: 'blue'
+                            });
+                        }
+                        
+                        frappe_call('/api/v2/method/ls_shop.lifestyle_shop_ecommerce.doctype.yoco_payment_request.yoco_payment_request.process_yoco_payment', {
+                            payment_request: alpineData.yoco_payment_data.payment_request_name,
+                            yoco_token: result.id
+                        }).then(function(response) {
+                            console.log('[Yoco] Payment processing response:', response);
+                            if (response && response.data) {
+                                // Modal already closed, just redirect
+                                const redirectUrl = response.data.redirect_to || '/{{frappe.lang}}/account/orders/confirmation?payment_request=' + alpineData.yoco_payment_data.payment_request_name;
+                                window.location.href = redirectUrl;
+                            } else {
+                                if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                                    frappe.show_alert({
+                                        message: 'Payment processing failed. Please contact support.',
+                                        indicator: 'red'
+                                    });
+                                }
+                            }
+                        }).catch(function(error) {
+                            console.error('[Yoco] Payment processing error:', error);
+                            if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                                frappe.show_alert({
+                                    message: error.message || 'Payment processing failed. Please contact support.',
+                                    indicator: 'red'
+                                });
+                            }
+                        });
+                    }
+                }
+            };
+            
+            if (alpineData.yoco_payment_data.enable_apple_pay && alpineData.yoco_payment_data.apple_pay_merchant_id) {
+                popupConfig.applePay = {
+                    merchantIdentifier: alpineData.yoco_payment_data.apple_pay_merchant_id,
+                    merchantCapabilities: ['supports3DS', 'supportsCredit', 'supportsDebit'],
+                    supportedNetworks: ['visa', 'masterCard', 'amex', 'discover']
+                };
+            }
+            
+            console.log('[Yoco] Opening payment popup...');
+            yoco.showPopup(popupConfig);
+        } catch (error) {
+            console.error('[Yoco] Error initializing payment:', error);
+            // Reopen modal if initialization failed
+            alpineData.show_yoco_modal = true;
+            button.disabled = false;
+            button.textContent = 'Pay with Yoco';
+            if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                frappe.show_alert({
+                    message: 'Failed to initialize payment. Please refresh and try again.',
+                    indicator: 'red'
+                });
+            }
+        }
     }
 </script>
 
@@ -665,6 +848,312 @@
             {% endwith %}
         </div>
     </div>
+
+    <!-- Yoco Payment Modal -->
+<div x-show="show_yoco_modal" x-cloak
+    x-transition:enter="transition ease-out duration-200"
+    x-transition:enter-start="opacity-0"
+    x-transition:enter-end="opacity-100"
+    x-transition:leave="transition ease-in duration-150"
+    x-transition:leave-start="opacity-100"
+    x-transition:leave-end="opacity-0"
+    x-trap.inert.noscroll="show_yoco_modal"
+    x-on:keydown.esc.window="show_yoco_modal = false"
+    x-on:click.self="show_yoco_modal = false"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+    role="dialog" aria-modal="true">
+    <div x-show="show_yoco_modal"
+        x-transition:enter="transition ease-out duration-200 delay-75"
+        x-transition:enter-start="opacity-0 scale-95"
+        x-transition:enter-end="opacity-100 scale-100"
+        x-transition:leave="transition ease-in duration-150"
+        x-transition:leave-start="opacity-100 scale-100"
+        x-transition:leave-end="opacity-0 scale-95"
+        class="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+        style="min-width: 380px;"
+        @click.stop>
+        <!-- Modal Header -->
+        <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+            <h3 class="text-lg font-semibold text-gray-900">{{ _("Complete Payment") }}</h3>
+            <button x-on:click="show_yoco_modal = false" aria-label="close modal"
+                class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" class="w-5 h-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <!-- Modal Body -->
+        <div class="px-6 py-6">
+            <!-- Loading State -->
+            <div x-show="!yoco_payment_data" class="text-center py-8" x-cloak>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-[#00a9e0] mx-auto"></div>
+                <p class="mt-4 text-gray-600">{{ _("Loading payment details...") }}</p>
+            </div>
+            
+            <!-- Payment Content -->
+            <template x-if="yoco_payment_data">
+                <div class="yoco-checkout-modal">
+                    <div class="space-y-6">
+                        <!-- Logo -->
+                        <div class="text-center">
+                            <img src="/assets/ls_shop/images/yoco.svg" alt="Yoco Logo" class="h-7 mx-auto object-contain">
+                        </div>
+                        
+                        <!-- Payment Details -->
+                        <div class="text-center space-y-1 border-b border-gray-100 pb-5">
+                            <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">
+                                <span x-text="'{{ _("Payment for") }} ' + (yoco_payment_data ? yoco_payment_data.reference_docname || '' : '')"></span>
+                            </p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" 
+                               x-text="(yoco_payment_data ? (yoco_payment_data.currency || 'ZAR') : 'ZAR') + ' ' + (yoco_payment_data && yoco_payment_data.amount ? parseFloat(yoco_payment_data.amount).toFixed(2) : '0.00')"></p>
+                        </div>
+                        
+                        <!-- Payment Button -->
+                        <div>
+                            <button id="yoco-payment-button-modal" 
+                                    type="button"
+                                    x-on:click="handleYocoPaymentClick($el)"
+                                    style="background-color: #00a9e0 !important; color: white !important; border: none !important;"
+                                    class="w-full text-white font-semibold text-sm py-2.5 px-5 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg hover:opacity-90 active:opacity-80 focus:outline-none focus:ring-2 focus:ring-[#00a9e0] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                                {{ _("Pay with Yoco") }}
+                            </button>
+                        </div>
+                        
+                        <!-- Security Badge - Small and subtle -->
+                        <div class="flex items-center justify-center gap-1 pt-2">
+                            <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                            </svg>
+                            <p class="text-xs text-gray-400 font-normal">{{ _("Secured by Yoco") }}</p>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+    <!-- End Yoco Payment Modal -->
+
+    <!-- Payfast Payment Modal -->
+    <div x-show="show_payfast_modal" x-cloak
+    x-transition:enter="transition ease-out duration-200"
+    x-transition:enter-start="opacity-0"
+    x-transition:enter-end="opacity-100"
+    x-transition:leave="transition ease-in duration-150"
+    x-transition:leave-start="opacity-100"
+    x-transition:leave-end="opacity-0"
+    x-trap.inert.noscroll="show_payfast_modal"
+    x-on:keydown.esc.window="show_payfast_modal = false"
+    x-on:click.self="show_payfast_modal = false"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+    role="dialog" aria-modal="true">
+    <div x-show="show_payfast_modal"
+        x-transition:enter="transition ease-out duration-200 delay-75"
+        x-transition:enter-start="opacity-0 scale-95"
+        x-transition:enter-end="opacity-100 scale-100"
+        x-transition:leave="transition ease-in duration-150"
+        x-transition:leave-start="opacity-100 scale-100"
+        x-transition:leave-end="opacity-0 scale-95"
+        class="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        @click.stop>
+        <!-- Modal Header -->
+        <div class="flex items-center justify-between border-b border-gray-200 p-4 bg-gray-50">
+            <h3 class="text-lg font-semibold text-gray-900">{{ _("Complete Payment") }}</h3>
+            <button x-on:click="show_payfast_modal = false" aria-label="close modal"
+                class="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" class="w-6 h-6">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <!-- Modal Body -->
+        <div class="flex-1 overflow-hidden">
+            <template x-if="payfast_form_data">
+                <form id="payfast-payment-form" method="POST" 
+                      x-bind:action="payfast_form_data.payfast_url"
+                      target="payfast-iframe" 
+                      style="display: none;">
+                    <template x-for="(value, key) in payfast_form_data.form_data" :key="key">
+                        <input type="hidden" x-bind:name="key" x-bind:value="value">
+                    </template>
+                </form>
+            </template>
+            <iframe 
+                name="payfast-iframe" 
+                id="payfast-iframe"
+                class="w-full border-0 flex-1"
+                style="min-height: 600px;"
+                x-show="payfast_form_data">
+            </iframe>
+            <div x-show="!payfast_form_data" class="text-center py-8">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                <p class="mt-4 text-gray-600">{{ _("Loading payment form...") }}</p>
+            </div>
+        </div>
+    </div>
+    <!-- End Payfast Payment Modal -->
 </div>
+
+<script>
+// Initialize Yoco payment in modal when modal opens and data is ready
+document.addEventListener('DOMContentLoaded', function() {
+    let yocoButtonInitialized = false;
+    
+    function initializeYocoButton() {
+        if (yocoButtonInitialized) return;
+        
+        // Watch for modal state changes via Alpine.js
+        const observer = new MutationObserver(function() {
+            const modal = document.querySelector('[x-show*="show_yoco_modal"]');
+            const button = document.getElementById('yoco-payment-button-modal');
+            const stateElement = document.querySelector('[x-data*="checkout_state"]');
+            
+            if (modal && button && stateElement && typeof YocoSDK !== 'undefined') {
+                // Get Alpine data from element
+                const alpineData = Alpine.$data(stateElement);
+                
+                if (alpineData && alpineData.yoco_payment_data && !button.dataset.initialized) {
+                    button.dataset.initialized = 'true';
+                    
+                    button.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        
+                        if (!alpineData.yoco_payment_data) return;
+                        
+                        const yoco = new YocoSDK({
+                            publicKey: alpineData.yoco_payment_data.public_key
+                        });
+                        
+                        const paymentMethods = ['card', 'googlePay', 'instantEFT'];
+                        if (alpineData.yoco_payment_data.enable_apple_pay && alpineData.yoco_payment_data.apple_pay_merchant_id) {
+                            paymentMethods.push('applePay');
+                        }
+                        
+                        const popupConfig = {
+                            amountInCents: parseInt(alpineData.yoco_payment_data.amount * 100),
+                            currency: alpineData.yoco_payment_data.currency,
+                            name: alpineData.yoco_payment_data.title,
+                            description: alpineData.yoco_payment_data.description,
+                            paymentMethods: paymentMethods,
+                            metadata: {
+                                payment_request: alpineData.yoco_payment_data.payment_request_name,
+                                reference_doctype: alpineData.yoco_payment_data.reference_doctype,
+                                reference_docname: alpineData.yoco_payment_data.reference_docname
+                            },
+                            callback: function(result) {
+                                if (result.error) {
+                                    if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                                        frappe.show_alert({
+                                            message: result.error.message,
+                                            indicator: 'red'
+                                        });
+                                    } else {
+                                        alert('Payment failed: ' + result.error.message);
+                                    }
+                                } else {
+                                    if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                                        frappe.show_alert({
+                                            message: 'Payment successful! Processing...',
+                                            indicator: 'blue'
+                                        });
+                                    }
+                                    
+                                    frappe_call('/api/v2/method/ls_shop.lifestyle_shop_ecommerce.doctype.yoco_payment_request.yoco_payment_request.process_yoco_payment', {
+                                        payment_request: alpineData.yoco_payment_data.payment_request_name,
+                                        yoco_token: result.id
+                                    }).then(function(response) {
+                                        console.log('[Yoco] Payment processing response:', response);
+                                        if (response && response.data) {
+                                            alpineData.show_yoco_modal = false;
+                                            window.location.href = response.data.redirect_to || '/{{frappe.lang}}/account/orders/confirmation?payment_request=' + alpineData.yoco_payment_data.payment_request_name;
+                                        } else {
+                                            if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                                                frappe.show_alert({
+                                                    message: 'Payment processing failed. Please contact support.',
+                                                    indicator: 'red'
+                                                });
+                                            }
+                                        }
+                                    }).catch(function(error) {
+                                        console.error('Payment processing error:', error);
+                                        if (typeof frappe !== 'undefined' && frappe.show_alert) {
+                                            frappe.show_alert({
+                                                message: error.message || 'Payment processing failed. Please contact support.',
+                                                indicator: 'red'
+                                            });
+                                        }
+                                    });
+                                }
+                            }
+                        };
+                        
+                        if (alpineData.yoco_payment_data.enable_apple_pay && alpineData.yoco_payment_data.apple_pay_merchant_id) {
+                            popupConfig.applePay = {
+                                merchantIdentifier: alpineData.yoco_payment_data.apple_pay_merchant_id,
+                                merchantCapabilities: ['supports3DS', 'supportsCredit', 'supportsDebit'],
+                                supportedNetworks: ['visa', 'masterCard', 'amex', 'discover']
+                            };
+                        }
+                        
+                        yoco.showPopup(popupConfig);
+                    });
+                }
+            }
+        });
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+    
+    // Initialize when Yoco SDK loads
+    if (typeof YocoSDK !== 'undefined') {
+        initializeYocoButton();
+    } else {
+        // Wait for SDK to load
+        window.addEventListener('load', function() {
+            if (typeof YocoSDK !== 'undefined') {
+                initializeYocoButton();
+            }
+        });
+    }
+    
+    // Auto-submit Payfast form when modal opens
+    function setupPayfastForm() {
+        const observer = new MutationObserver(function() {
+            const modal = document.querySelector('[x-show*="show_payfast_modal"]');
+            const form = document.getElementById('payfast-payment-form');
+            const iframe = document.getElementById('payfast-iframe');
+            const stateElement = document.querySelector('[x-data*="checkout_state"]');
+            
+            if (modal && form && iframe && stateElement) {
+                const alpineData = Alpine.$data(stateElement);
+                
+                if (alpineData && alpineData.show_payfast_modal && alpineData.payfast_form_data && !form.dataset.submitted) {
+                    form.dataset.submitted = 'true';
+                    
+                    // Wait for iframe to be ready
+                    setTimeout(function() {
+                        try {
+                            form.submit();
+                        } catch (e) {
+                            console.error('Error submitting Payfast form:', e);
+                        }
+                    }, 300);
+                }
+            }
+        });
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+    
+    setupPayfastForm();
+});
+</script>
 
 {% endblock %}

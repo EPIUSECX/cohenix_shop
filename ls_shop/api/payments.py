@@ -636,3 +636,55 @@ def is_payfast_configured():
 		return bool(settings.merchant_id and settings.merchant_key)
 	except Exception:
 		return False
+
+
+@frappe.whitelist()
+def get_yoco_payment_details(payment_request_name):
+	"""Get Yoco payment details for modal display"""
+	try:
+		# Ensure payment_request_name is a string
+		payment_request_name = str(payment_request_name)
+		payment_request = frappe.get_doc("Yoco Payment Request", payment_request_name)
+		
+		# Verify user has access
+		if frappe.session.user == "Guest":
+			frappe.throw(frappe._("Please login to complete payment"), frappe.PermissionError)
+		
+		# Get Yoco Settings
+		yoco_settings = payment_request.get_yoco_settings()
+		
+		# Get public key
+		public_key = yoco_settings.get("public_key")
+		if not public_key:
+			frappe.throw(frappe._("Yoco Public Key not configured"), frappe.PermissionError)
+		
+		# Get quotation details
+		quotation = frappe.get_doc(payment_request.ref_doctype, payment_request.ref_docname)
+		
+		# Ensure amount is set and is a valid number
+		try:
+			amount = float(payment_request.amount) if payment_request.amount else 0.0
+		except (TypeError, ValueError):
+			amount = 0.0
+		
+		if amount <= 0:
+			frappe.throw(frappe._("Invalid payment amount"), frappe.ValidationError)
+		
+		return {
+			"payment_request_name": payment_request_name,
+			"amount": amount,
+			"currency": payment_request.currency_code or "ZAR",
+			"public_key": public_key,
+			"reference_docname": quotation.name,
+			"reference_doctype": quotation.doctype,
+			"title": f"Payment for {quotation.name}",
+			"description": f"Payment for {quotation.doctype} {quotation.name}",
+			"enable_apple_pay": getattr(yoco_settings, "enable_apple_pay", False),
+			"apple_pay_merchant_id": getattr(yoco_settings, "apple_pay_merchant_id", "") or ""
+		}
+	except Exception as e:
+		frappe.log_error(
+			f"Error getting Yoco payment details: {str(e)}\n{frappe.get_traceback()}",
+			"Yoco Payment Details Error"
+		)
+		frappe.throw(frappe._("Failed to load payment details: {0}").format(str(e)))

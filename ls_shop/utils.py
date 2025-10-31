@@ -222,10 +222,46 @@ def get_cod_configuration():
 
 
 def get_currency_symbol():
-	currency = frappe.get_cached_value("Global Defaults", "Global Defaults", "default_currency")
-	if currency == "SAR" or frappe.conf.developer_mode:
-		return '<span class="saudi-currency-symbol pe-0.5"></span>'
-	return frappe.get_cached_value("Currency", currency, "symbol")
+	"""Get currency symbol dynamically based on company's default currency"""
+	try:
+		# Use ERPNext's get_default_currency() which gets currency from default company
+		from erpnext import get_default_currency
+		currency = get_default_currency()
+		
+		# If no currency from company, fallback to Global Defaults
+		if not currency:
+			currency = frappe.get_cached_value("Global Defaults", "Global Defaults", "default_currency")
+		
+		if not currency:
+			# Ultimate fallback
+			return "¥"
+		
+		# Special handling for SAR (Saudi Riyal) - use custom symbol
+		if currency == "SAR":
+			return '<span class="saudi-currency-symbol pe-0.5"></span>'
+		
+		# Get symbol from Currency doctype
+		currency_symbol = frappe.get_cached_value("Currency", currency, "symbol")
+		
+		# If symbol not found, return currency code as fallback
+		if not currency_symbol:
+			return currency
+		
+		return currency_symbol
+	except Exception as e:
+		# Fallback to Global Defaults on any error
+		try:
+			currency = frappe.get_cached_value("Global Defaults", "Global Defaults", "default_currency")
+			if currency:
+				if currency == "SAR":
+					return '<span class="saudi-currency-symbol pe-0.5"></span>'
+				symbol = frappe.get_cached_value("Currency", currency, "symbol")
+				return symbol or currency
+			return "¥"  # Ultimate fallback
+		except Exception:
+			# Log error but don't break the page
+			frappe.log_error(f"Error getting currency symbol: {str(e)}", "Currency Symbol Error")
+			return "¥"  # Ultimate fallback
 
 
 def get_addresses(party=None, address_type="Billing"):
