@@ -1,0 +1,225 @@
+{
+	"actions": [],
+	"autoname": "autoincrement",
+	"creation": "2025-01-20 12:00:00.000000",
+	"doctype": "DocType",
+	"engine": "InnoDB",
+	"field_order": [
+		"payfast_payment_id",
+		"pf_payment_id",
+		"m_payment_id",
+		"column_break_1",
+		"payfast_order_url",
+		"status",
+		"payment_method",
+		"section_break_1",
+		"amount",
+		"column_break_2",
+		"currency_code",
+		"customer_details_section",
+		"customer_ref",
+		"customer_phone",
+		"customer_forenames",
+		"column_break_3",
+		"customer_email",
+		"customer_address",
+		"customer_surname",
+		"reference_section",
+		"ref_doctype",
+		"column_break_4",
+		"ref_docname"
+	],
+	"fields": [
+		{
+			"allow_in_quick_entry": 1,
+			"default": "Quotation",
+			"fieldname": "ref_doctype",
+			"fieldtype": "Link",
+			"label": "Reference DocType",
+			"options": "DocType"
+		},
+		{
+			"fieldname": "column_break_4",
+			"fieldtype": "Column Break"
+		},
+		{
+			"allow_in_quick_entry": 1,
+			"fieldname": "ref_docname",
+			"fieldtype": "Dynamic Link",
+			"label": "Reference Name",
+			"options": "ref_doctype"
+		},
+		{
+			"fieldname": "payfast_payment_id",
+			"fieldtype": "Data",
+			"label": "Payfast Payment ID",
+			"no_copy": 1,
+			"read_only": 1
+		},
+		{
+			"default": "Pending",
+			"fieldname": "status",
+			"fieldtype": "Select",
+			"in_list_view": 1,
+			"in_standard_filter": 1,
+			"label": "Status",
+			"no_copy": 1,
+			"options": "Pending\nComplete\nCancelled\nFailed",
+			"read_only": 1
+		},
+		{
+			"fieldname": "reference_section",
+			"fieldtype": "Section Break",
+			"label": "Reference"
+		},
+		{
+			"fieldname": "section_break_1",
+			"fieldtype": "Section Break",
+			"label": "Payfast Details"
+		},
+		{
+			"fieldname": "column_break_1",
+			"fieldtype": "Column Break"
+		},
+		{
+			"allow_in_quick_entry": 1,
+			"fieldname": "amount",
+			"fieldtype": "Currency",
+			"in_list_view": 1,
+			"label": "Amount",
+			"options": "currency_code",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "column_break_2",
+			"fieldtype": "Column Break"
+		},
+		{
+			"allow_in_quick_entry": 1,
+			"fieldname": "currency_code",
+			"fieldtype": "Link",
+			"in_list_view": 1,
+			"label": "Currency Code",
+			"options": "Currency",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "payfast_order_url",
+			"fieldtype": "Data",
+			"label": "Payfast Order URL",
+			"no_copy": 1,
+			"options": "URL",
+			"read_only": 1
+		},
+		{
+			"fieldname": "m_payment_id",
+			"fieldtype": "Data",
+			"label": "Merchant Payment ID",
+			"no_copy": 1,
+			"read_only": 1,
+			"unique": 1
+		},
+		{
+			"fieldname": "pf_payment_id",
+			"fieldtype": "Data",
+			"label": "Payfast Payment ID",
+			"no_copy": 1,
+			"read_only": 1
+		},
+		{
+			"fieldname": "customer_details_section",
+			"fieldtype": "Section Break",
+			"label": "Customer Details",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "customer_ref",
+			"fieldtype": "Data",
+			"label": "Customer Reference",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "column_break_3",
+			"fieldtype": "Column Break"
+		},
+		{
+			"fieldname": "customer_email",
+			"fieldtype": "Data",
+			"label": "Customer Email",
+			"options": "Email",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "customer_phone",
+			"fieldtype": "Data",
+			"label": "Customer Phone",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "customer_address",
+			"fieldtype": "Link",
+			"label": "Customer Address",
+			"options": "Address",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "customer_forenames",
+			"fieldtype": "Data",
+			"label": "Customer Forenames",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "customer_surname",
+			"fieldtype": "Data",
+			"label": "Customer Surname",
+			"set_only_once": 1
+		},
+		{
+			"fieldname": "payment_method",
+			"fieldtype": "Data",
+			"label": "Payment Method",
+			"read_only": 1
+		}
+	],
+	"grid_page_length": 50,
+	"index_web_pages_for_search": 1,
+	"links": [],
+	"modified": "2025-01-20 12:00:00.000000",
+	"modified_by": "Administrator",
+	"module": "Lifestyle Shop Ecommerce",
+	"name": "Payfast Payment Request",
+	"naming_rule": "Autoincrement",
+	"owner": "Administrator",
+	"permissions": [
+		{
+			"create": 1,
+			"delete": 1,
+			"email": 1,
+			"export": 1,
+			"print": 1,
+			"read": 1,
+			"report": 1,
+			"role": "System Manager",
+			"share": 1,
+			"write": 1
+		},
+		{
+			"create": 1,
+			"delete": 1,
+			"email": 1,
+			"export": 1,
+			"print": 1,
+			"read": 1,
+			"report": 1,
+			"role": "Customer",
+			"share": 1,
+			"write": 1
+		}
+	],
+	"quick_entry": 1,
+	"row_format": "Dynamic",
+	"sort_field": "modified",
+	"sort_order": "DESC",
+	"states": []
+}
+

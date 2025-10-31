@@ -14,10 +14,48 @@
 
 {% block body %}
 <script>
+	// Redirect to checkout if user just logged in and has redirect-to parameter
+	(function() {
+		console.log('[Checkout Page] Script running...');
+		console.log('[Checkout Page] Current pathname:', window.location.pathname);
+		console.log('[Checkout Page] Current URL:', window.location.href);
+		
+		if (typeof frappe !== 'undefined' && frappe.session) {
+			console.log('[Checkout Page] User:', frappe.session.user);
+			
+			if (frappe.session.user !== 'Guest') {
+				const urlParams = new URLSearchParams(window.location.search);
+				const redirectTo = urlParams.get('redirect-to');
+				const sessionRedirect = sessionStorage.getItem('checkout_redirect');
+				
+				console.log('[Checkout Page] URL param redirect-to:', redirectTo);
+				console.log('[Checkout Page] SessionStorage checkout_redirect:', sessionRedirect);
+				
+				if (redirectTo && redirectTo.includes('/cart/checkout')) {
+					console.log('[Checkout Page] Already on checkout page, cleaning URL');
+					// Already on checkout page, just clean the URL
+					window.history.replaceState({}, document.title, window.location.pathname);
+				}
+				
+				// Clean up sessionStorage if we're on checkout
+				if (window.location.pathname.includes('/cart/checkout')) {
+					console.log('[Checkout Page] Cleaning up sessionStorage redirect');
+					sessionStorage.removeItem('checkout_redirect');
+				}
+			} else {
+				console.log('[Checkout Page] User is Guest');
+			}
+		} else {
+			console.log('[Checkout Page] Frappe or session not available');
+		}
+	})();
+	
     function get_available_payment_modes(){
         return [
                 { key: 'telr', enabled: parseInt('{{ show_telr }}') },
                 { key: 'tabby', enabled: parseInt('{{ show_tabby }}') },
+                { key: 'yoco', enabled: parseInt('{{ 1 if show_yoco else 0 }}') },
+                { key: 'payfast', enabled: parseInt('{{ 1 if show_payfast else 0 }}') },
                 { key: 'cod', enabled: parseInt('{{ show_cod }}') },
             ]
     }
@@ -174,6 +212,42 @@
                     return
                 }
                 window.location.href = data["payment_request"]["tabby_order_url"]
+            }
+
+            if (state.payment_mode === "yoco") {
+                if (data?.payment_request?.yoco_order_url) {
+                    window.location.href = data["payment_request"]["yoco_order_url"]
+                }
+            }
+
+            if (state.payment_mode === "payfast") {
+                // For Payfast, we need to submit a form to Payfast
+                // Get the payment form data
+                if (data?.payment_request?.name) {
+                    frappe_call(
+                        "/api/v2/method/ls_shop.lifestyle_shop_ecommerce.doctype.payfast_payment_request.payfast_payment_request.get_payment_form",
+                        { name: data["payment_request"]["name"] }
+                    ).then(response => {
+                        const formData = response.data.message;
+                        // Create and submit form to Payfast
+                        const form = document.createElement('form');
+                        form.method = 'POST';
+                        form.action = formData.payfast_url;
+                        Object.keys(formData.form_data).forEach(key => {
+                            const input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = key;
+                            input.value = formData.form_data[key];
+                            form.appendChild(input);
+                        });
+                        document.body.appendChild(form);
+                        form.submit();
+                    }).catch(err => {
+                        console.error('Error getting Payfast form:', err);
+                        btn.disabled = false;
+                        spinner.classList.add("hidden");
+                    });
+                }
             }
         }
         catch (err) {
@@ -448,7 +522,7 @@
                     <div class="space-y-3">
                         <label
                             class="flex items-start flex-col p-3 space-x-3 bg-white border rounded-lg hover:bg-gray-50 border-gray-200/70 cursor-pointer"
-                            x-show="{{show_telr}}">
+                            x-show="{{ 1 if show_telr else 0 }}">
                             <div class="flex items-center">
                                 <input type="radio" name="telr_radio" value="telr"
                                     class="h-5 w-5 accent-gray-900 translate-y-px focus:ring-gray-700 cursor-pointer"
@@ -461,7 +535,7 @@
                         </label>
                         <label
                             class="flex flex-col items-start p-3 space-x-3 bg-white border rounded-lg hover:bg-gray-50 border-gray-200/70 cursor-pointer"
-                            x-show="{{show_tabby}}">
+                            x-show="{{ 1 if show_tabby else 0 }}">
                             <div class="flex items-center">
                                 <input type="radio" name="tabby_radio" value="tabby"
                                     class="h-5 w-5 accent-gray-900 translate-y-px focus:ring-gray-700 cursor-pointer"
@@ -478,8 +552,34 @@
                             </div>
                         </label>
                         <label
+                            class="flex items-start flex-col p-3 space-x-3 bg-white border rounded-lg hover:bg-gray-50 border-gray-200/70 cursor-pointer"
+                            x-show="{{ 1 if show_yoco else 0 }}">
+                            <div class="flex items-center">
+                                <input type="radio" name="yoco_radio" value="yoco"
+                                    class="h-5 w-5 accent-gray-900 translate-y-px focus:ring-gray-700 cursor-pointer"
+                                    x-model="payment_mode" />
+                                <span class="text-base ps-3">
+                                    {{ _('Yoco') }}
+                                </span>
+                            </div>
+                       {% include "templates/components/payment_svg.html" %}
+                        </label>
+                        <label
+                            class="flex items-start flex-col p-3 space-x-3 bg-white border rounded-lg hover:bg-gray-50 border-gray-200/70 cursor-pointer"
+                            x-show="{{ 1 if show_payfast else 0 }}">
+                            <div class="flex items-center">
+                                <input type="radio" name="payfast_radio" value="payfast"
+                                    class="h-5 w-5 accent-gray-900 translate-y-px focus:ring-gray-700 cursor-pointer"
+                                    x-model="payment_mode" />
+                                <span class="text-base ps-3">
+                                    {{ _('PayFast') }}
+                                </span>
+                            </div>
+                       {% include "templates/components/payment_svg.html" %}
+                        </label>
+                        <label
                             class="flex flex-col items-start p-3 space-x-3 bg-white border rounded-lg hover:bg-gray-50 border-gray-200/70 cursor-pointer"
-                            x-show="{{show_cod}}">
+                            x-show="{{ 1 if show_cod else 0 }}">
                             <div class="flex items-center">
                                 <input type="radio" name="cod_radio" value="cod"
                                     class="h-5 w-5 accent-gray-900 translate-y-px focus:ring-gray-700 cursor-pointer"

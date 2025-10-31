@@ -1,0 +1,2 @@
+# Payfast Payment Request doctype
+

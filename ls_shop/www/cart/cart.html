@@ -3,34 +3,163 @@
 {% from 'templates/macros/signup_modal.html' import signup_modal %}
 {% from 'templates/macros/icon.html' import icon %}
 {% block body %}
+<script>
+	// Check if user just logged in and should be redirected to checkout
+	// This must run before Alpine initializes
+	(function() {
+		console.log('[Checkout Redirect] Script running...');
+		console.log('[Checkout Redirect] Current pathname:', window.location.pathname);
+		console.log('[Checkout Redirect] Current URL:', window.location.href);
+		
+		if (typeof frappe !== 'undefined') {
+			console.log('[Checkout Redirect] Frappe is defined');
+			console.log('[Checkout Redirect] frappe.session:', frappe.session ? 'exists' : 'undefined');
+			
+			if (frappe.session && frappe.session.user) {
+				console.log('[Checkout Redirect] User:', frappe.session.user);
+				
+				if (frappe.session.user !== 'Guest') {
+					console.log('[Checkout Redirect] User is logged in, checking for redirect...');
+					
+					const checkoutRedirect = sessionStorage.getItem('checkout_redirect');
+					console.log('[Checkout Redirect] SessionStorage checkout_redirect:', checkoutRedirect);
+					
+					if (checkoutRedirect && !window.location.pathname.includes('/cart/checkout')) {
+						console.log('[Checkout Redirect] Found checkout_redirect in sessionStorage, redirecting to:', checkoutRedirect);
+						sessionStorage.removeItem('checkout_redirect');
+						window.location.href = checkoutRedirect;
+						return;
+					}
+					
+					const urlParams = new URLSearchParams(window.location.search);
+					const redirectTo = urlParams.get('redirect-to');
+					console.log('[Checkout Redirect] URL param redirect-to:', redirectTo);
+					
+					if (redirectTo && redirectTo.includes('/cart/checkout')) {
+						console.log('[Checkout Redirect] Found redirect-to in URL, redirecting to:', redirectTo);
+						sessionStorage.removeItem('checkout_redirect');
+						window.location.href = redirectTo;
+						return;
+					}
+					
+					console.log('[Checkout Redirect] No redirect found, staying on current page');
+				} else {
+					console.log('[Checkout Redirect] User is Guest, no redirect');
+				}
+			} else {
+				console.log('[Checkout Redirect] frappe.session.user is undefined');
+			}
+		} else {
+			console.log('[Checkout Redirect] Frappe is not defined yet, will check on DOMContentLoaded');
+			document.addEventListener('DOMContentLoaded', function() {
+				console.log('[Checkout Redirect] DOMContentLoaded - checking again...');
+				if (typeof frappe !== 'undefined' && frappe.session && frappe.session.user !== 'Guest') {
+					const checkoutRedirect = sessionStorage.getItem('checkout_redirect');
+					if (checkoutRedirect && !window.location.pathname.includes('/cart/checkout')) {
+						console.log('[Checkout Redirect] DOMContentLoaded - Found checkout_redirect, redirecting to:', checkoutRedirect);
+						sessionStorage.removeItem('checkout_redirect');
+						window.location.href = checkoutRedirect;
+					}
+				}
+			});
+		}
+	})();
+</script>
 <script defer>
+	let checkoutInProgress = false; // Global flag to prevent multiple simultaneous calls
+	
 	async function proceed_to_checkout(state) {
-		state.checkout_loading = true;
-		const selected_items = Alpine.store("cart").items.filter(item => item.selected);
-		const has_stock = await Alpine.store("cart").validate_stock_before_checkout(selected_items);
-
-		if (!has_stock) {
-			state.checkout_loading = false;
+		// Prevent multiple simultaneous calls
+		if (checkoutInProgress || state.checkout_loading) {
+			console.log('[Checkout] Already in progress, ignoring click');
 			return;
 		}
-		frappe_call("/api/v2/method/ls_shop.api.payments.generate_quotation_for_cart", { cart: { items: selected_items } })
-			.then((d) => {
-				window.location.href = "/{{frappe.lang}}/cart/checkout"
-			}).finally(() => {
+		
+		checkoutInProgress = true;
+		state.checkout_loading = true;
+		
+		try {
+			const selected_items = Alpine.store("cart").items.filter(item => item.selected);
+			
+			if (!selected_items || selected_items.length === 0) {
+				console.log('[Checkout] No items selected');
+				if (typeof frappe !== 'undefined' && frappe.show_alert) {
+					frappe.show_alert({
+						message: "Please select at least one item to checkout",
+						indicator: "orange"
+					});
+				}
+				return;
+			}
+			
+			const has_stock = await Alpine.store("cart").validate_stock_before_checkout(selected_items);
+
+			if (!has_stock) {
+				console.log('[Checkout] Stock validation failed');
 				state.checkout_loading = false;
-			})
+				checkoutInProgress = false;
+				return;
+			}
+			
+			console.log('[Checkout] Calling generate_quotation_for_cart');
+			const response = await frappe_call("/api/v2/method/ls_shop.api.payments.generate_quotation_for_cart", { cart: { items: selected_items } });
+			
+			console.log('[Checkout] Quotation created successfully, redirecting to checkout');
+			// Don't reset loading state here since we're redirecting
+			window.location.href = "/{{frappe.lang}}/cart/checkout";
+			
+		} catch (error) {
+			console.log('[Checkout] Error caught:', error);
+			console.log('[Checkout] Error exc_type:', error.exc_type);
+			console.log('[Checkout] Error message:', error.message);
+			
+			state.checkout_loading = false;
+			checkoutInProgress = false;
+			
+			// If user needs to login, redirect to login page
+			if (error.exc_type === "PermissionError" || error.message?.includes("login")) {
+				console.log('[Checkout] User needs to login, setting up redirect...');
+				
+				// Store the intended checkout destination in sessionStorage
+				const checkout_url = "/{{frappe.lang}}/cart/checkout";
+				console.log('[Checkout] Storing checkout_url in sessionStorage:', checkout_url);
+				sessionStorage.setItem("checkout_redirect", checkout_url);
+				
+				// Verify it was stored
+				const stored = sessionStorage.getItem("checkout_redirect");
+				console.log('[Checkout] Verified stored redirect:', stored);
+				
+				// Use Frappe's login route without language prefix
+				// The redirect-to parameter may not work reliably, so we'll check sessionStorage after login
+				const login_url = `/login?redirect-to=${encodeURIComponent(checkout_url)}`;
+				console.log('[Checkout] Redirecting to login:', login_url);
+				window.location.href = login_url;
+			} else {
+				console.log('[Checkout] Other error, showing alert');
+				// Show other errors
+				if (typeof frappe !== 'undefined' && frappe.show_alert) {
+					frappe.show_alert({
+						message: error.message || "An error occurred during checkout",
+						indicator: "red"
+					});
+				} else {
+					// Fallback if frappe is not available
+					alert(error.message || "An error occurred during checkout");
+				}
+			}
+		}
 	}
 </script>
 
 <div class=" space-y-10" x-data="{ 
-		checkout_loading: false,
-		cart_loading: true,
-		delivery_charge: {{delivery_charge}},
-		delivery_charge_applicable_below: {{delivery_charge_applicable_below}},
-		cart_total : $store.cart.total,
-		show_delivery_charges: false,
-	}" x-init="
-		if (delivery_charge_applicable_below > cart_total && delivery_charge > 0  && $store.cart.selected_count > 0) {
+	checkout_loading: false,
+	cart_loading: true,
+	delivery_charge: {{delivery_charge}},
+	delivery_charge_applicable_below: {{delivery_charge_applicable_below}},
+	cart_total : $store.cart.total,
+	show_delivery_charges: false,
+}" x-init="
+	if (delivery_charge_applicable_below > cart_total && delivery_charge > 0  && $store.cart.selected_count > 0) {
 			cart_total = cart_total + delivery_charge
 			show_delivery_charges = true
 		} 

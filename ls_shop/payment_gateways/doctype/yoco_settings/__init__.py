@@ -1,0 +1,2 @@
+# Yoco Settings doctype
+

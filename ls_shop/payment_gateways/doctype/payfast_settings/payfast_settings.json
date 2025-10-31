@@ -1,0 +1,84 @@
+{
+ "creation": "2024-05-03 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "merchant_id",
+  "merchant_key",
+  "passphrase",
+  "sandbox_mode",
+  "return_url",
+  "cancel_url",
+  "notify_url"
+ ],
+ "fields": [
+  {
+   "fieldname": "merchant_id",
+   "fieldtype": "Data",
+   "label": "Merchant ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "merchant_key",
+   "fieldtype": "Data",
+   "label": "Merchant Key",
+   "reqd": 1
+  },
+  {
+   "description": "Optional security passphrase from PayFast dashboard Settings > Integration > Security. Must match exactly (case-sensitive).",
+   "fieldname": "passphrase",
+   "fieldtype": "Password",
+   "label": "Passphrase"
+  },
+  {
+   "default": "0",
+   "description": "Enable to use PayFast sandbox for testing. Use sandbox credentials when enabled.",
+   "fieldname": "sandbox_mode",
+   "fieldtype": "Check",
+   "label": "Sandbox Mode"
+  },
+  {
+   "description": "Example: /payment-success (user sees success page after payment)",
+   "fieldname": "return_url",
+   "fieldtype": "Data",
+   "label": "Return URL"
+  },
+  {
+   "description": "Example: /payment-failed (user sees cancel page)",
+   "fieldname": "cancel_url",
+   "fieldtype": "Data",
+   "label": "Cancel URL"
+  },
+  {
+   "description": "/api/method/ls_shop.payment_gateways.payfast_itn.handle_itn",
+   "fieldname": "notify_url",
+   "fieldtype": "Data",
+   "label": "Notify URL (ITN)"
+  }
+ ],
+ "modified": "2024-05-03 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Payment Gateways",
+ "name": "Payfast Settings",
+ "owner": "Administrator",
+"permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "is_payment_gateway": 1
+}
+

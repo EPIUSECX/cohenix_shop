@@ -1,11 +1,24 @@
 <script>
     async function frappe_call(url, args, method = "POST") {
         let response;
+        
+        // Get CSRF token dynamically from frappe.session if available, otherwise use template token
+        let csrf_token = '{{ frappe.session.csrf_token }}';
+        if (typeof frappe !== 'undefined' && frappe.session && frappe.session.csrf_token) {
+            csrf_token = frappe.session.csrf_token;
+            console.log('[frappe_call] Using dynamic CSRF token');
+        } else {
+            console.log('[frappe_call] Using template CSRF token');
+        }
+        
         let headers = {
             'Content-Type': 'application/json; charset=utf-8',
-            "X-Frappe-CSRF-Token": '{{ frappe.session.csrf_token }}',
+            "X-Frappe-CSRF-Token": csrf_token,
             Accept: "application/json",
         }
+        
+        console.log('[frappe_call] Making request to:', url);
+        console.log('[frappe_call] CSRF Token present:', !!csrf_token);
         if (method === "POST") {
             response = await fetch(url, {
                 body: JSON.stringify(args),
@@ -27,19 +40,59 @@
         const data = await response.json()
         if (data.errors) {
             const error = data.errors[0] // todo: handle multiple errors
+            
+            console.log('[frappe_call] Error response:', error);
+            console.log('[frappe_call] Error type:', error.type);
 
-            if (error.message) {
-                toast(error.message, { type: "danger" })
+            // If CSRF error and we used template token, try to get fresh token from frappe.session
+            if (error.type === "CSRFTokenError" && typeof frappe !== 'undefined' && frappe.session && frappe.session.csrf_token) {
+                console.log('[frappe_call] CSRF error, retrying with fresh token from frappe.session');
+                // Update token and retry once
+                headers["X-Frappe-CSRF-Token"] = frappe.session.csrf_token;
+                if (method === "POST") {
+                    response = await fetch(url, {
+                        body: JSON.stringify(args),
+                        method: "POST",
+                        headers
+                    });
+                } else if (method === "PUT") {
+                    response = await fetch(url, {
+                        body: JSON.stringify(args),
+                        method: "PUT",
+                        headers
+                    });
+                } else {
+                    response = await fetch(url);
+                }
+                
+                const retryData = await response.json();
+                if (retryData.errors) {
+                    // Still error after retry, throw it
+                    if (retryData.errors[0].message) {
+                        toast(retryData.errors[0].message, { type: "danger" });
+                    } else {
+                        toast("Internal Server Error", { type: "danger" });
+                    }
+                    throw Error(retryData.errors[0].exception);
+                } else if (!response.ok) {
+                    toast("Something went wrong", { type: "danger" });
+                } else {
+                    return retryData;
+                }
             } else {
-                toast("Internal Server Error", { type: "danger" })
+                // Other error or retry didn't work
+                if (error.message) {
+                    toast(error.message, { type: "danger" });
+                } else {
+                    toast("Internal Server Error", { type: "danger" });
+                }
+                throw Error(error.exception);
             }
-
-            throw Error(error.exception)
         } else if (!response.ok) {
-            toast("Something went wrong", { type: "danger" })
+            toast("Something went wrong", { type: "danger" });
         }
         else {
-            return data
+            return data;
         }
     }
 </script>

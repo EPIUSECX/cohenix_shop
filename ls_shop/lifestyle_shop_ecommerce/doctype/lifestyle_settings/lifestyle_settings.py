@@ -82,8 +82,14 @@ class LifestyleSettings(Document):
 	pass
 
 	def validate(self):
-		if not self.telr_enabled and not self.tabby_enabled and not self.cod_enabled:
-			frappe.throw(frappe._("At least one payment method (Telr, Tabby, or COD) must be enabled."))
+		if not (
+			self.telr_enabled 
+			or self.tabby_enabled 
+			or self.yoco_enabled 
+			or self.payfast_enabled 
+			or self.cod_enabled
+		):
+			frappe.throw(frappe._("At least one payment method (Telr, Tabby, Yoco, Payfast, or COD) must be enabled."))
 
 	def get_default_price_list(self):
 		return (

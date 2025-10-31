@@ -33,6 +33,10 @@
 		"column_break_iirq",
 		"tabby_enabled",
 		"column_break_oopm",
+		"yoco_enabled",
+		"column_break_yoco",
+		"payfast_enabled",
+		"column_break_payfast",
 		"cod_enabled",
 		"bulk_import_tab",
 		"create_variants_automatically_on_configurator_creation",
@@ -600,6 +604,26 @@
 			"fieldname": "tabby_enabled",
 			"fieldtype": "Check",
 			"label": "Tabby"
+		},
+		{
+			"fieldname": "column_break_yoco",
+			"fieldtype": "Column Break"
+		},
+		{
+			"default": "0",
+			"fieldname": "yoco_enabled",
+			"fieldtype": "Check",
+			"label": "Yoco"
+		},
+		{
+			"fieldname": "column_break_payfast",
+			"fieldtype": "Column Break"
+		},
+		{
+			"default": "0",
+			"fieldname": "payfast_enabled",
+			"fieldtype": "Check",
+			"label": "PayFast"
 		},
 		{
 			"default": "1",

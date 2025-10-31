@@ -1,0 +1,2 @@
+# Yoco Payment Request doctype
+

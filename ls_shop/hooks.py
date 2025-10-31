@@ -50,6 +50,8 @@ website_route_rules = [
 	},
 	{"from_route": "/en/account/wishlist", "to_route": "/account/wishlist.html"},
 	{"from_route": "/en/account/address", "to_route": "/account/address.html"},
+	# -> Payment
+	{"from_route": "/yoco-checkout", "to_route": "/yoco_checkout.html"},
 	#
 	# ------------
 	# Arabic Routes
@@ -80,6 +82,11 @@ website_route_rules = [
 ]
 
 before_request = ["ls_shop.utils.before_request"]
+
+web_include_routes = {
+	"/api/method/ls_shop.payment_gateways.yoco_webhook.handle_webhook": "ls_shop.payment_gateways.yoco_webhook.handle_webhook",
+	"/api/method/ls_shop.payment_gateways.payfast_itn.handle_itn": "ls_shop.payment_gateways.payfast_itn.handle_itn",
+}
 
 doctype_js = {
 	"Item": "public/js/extends/item.js",

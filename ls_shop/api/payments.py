@@ -16,29 +16,102 @@ from ls_shop.utils import get_cod_configuration
 class PaymentMode(StrEnum):
 	TELR = "telr"
 	TABBY = "tabby"
+	YOCO = "yoco"
+	PAYFAST = "payfast"
 	COD = "cod"
 
 
 @frappe.whitelist()
 def initiate_checkout_with_mode(payment_mode: PaymentMode):
+	# Check if gateway is configured and enabled
 	lifestyle_settings = frappe.get_cached_doc("Lifestyle Settings")
-	if payment_mode not in set(PaymentMode) or not lifestyle_settings.get(f"{payment_mode}_enabled"):
-		frappe.throw(frappe._("Please select a valid payment mode."))
+	
+	if payment_mode == PaymentMode.YOCO:
+		if not is_yoco_configured():
+			frappe.throw(frappe._("Yoco payment gateway is not configured."))
+		if not lifestyle_settings.get("yoco_enabled", 0):
+			frappe.throw(frappe._("Yoco payment gateway is not enabled."))
+	elif payment_mode == PaymentMode.PAYFAST:
+		if not is_payfast_configured():
+			frappe.throw(frappe._("Payfast payment gateway is not configured."))
+		if not lifestyle_settings.get("payfast_enabled", 0):
+			frappe.throw(frappe._("Payfast payment gateway is not enabled."))
+	else:
+		# For Telr/Tabby/COD, check Lifestyle Settings
+		if payment_mode not in set(PaymentMode) or not lifestyle_settings.get(f"{payment_mode}_enabled"):
+			frappe.throw(frappe._("Please select a valid payment mode."))
 
 	quotation = _get_cart_quotation()
 	update_delivery_charges(quotation)
-	customer_contact = frappe.db.get_value(
-		"Contact",
-		quotation.contact_person,
-		["email_id", "first_name", "last_name"],
-		as_dict=True,
-	)
-
-	customer_phone = frappe.db.get_value(
-		"Contact Phone",
-		{"parent": quotation.contact_person, "parenttype": "Contact", "idx": 1},
-		"phone",
-	)
+	
+	# Ensure quotation has rounded_total
+	if not quotation.rounded_total:
+		quotation.run_method("calculate_taxes_and_totals")
+		quotation.save()
+	
+	# Get contact information - handle case where contact_person might be None
+	customer_contact = None
+	customer_phone = None
+	
+	if quotation.contact_person:
+		customer_contact = frappe.db.get_value(
+			"Contact",
+			quotation.contact_person,
+			["email_id", "first_name", "last_name"],
+			as_dict=True,
+		)
+		
+		customer_phone = frappe.db.get_value(
+			"Contact Phone",
+			{"parent": quotation.contact_person, "parenttype": "Contact", "idx": 1},
+			"phone",
+		)
+	
+	# Fallback to party (Customer) information if contact is missing
+	if not customer_contact:
+		# Try to get contact from customer/party
+		if quotation.party_name:
+			contacts = frappe.get_all(
+				"Dynamic Link",
+				filters={
+					"link_doctype": "Customer",
+					"link_name": quotation.party_name,
+					"parenttype": "Contact",
+				},
+				fields=["parent"],
+				limit=1,
+			)
+			if contacts:
+				contact_name = contacts[0].parent
+				customer_contact = frappe.db.get_value(
+					"Contact",
+					contact_name,
+					["email_id", "first_name", "last_name"],
+					as_dict=True,
+				)
+				customer_phone = frappe.db.get_value(
+					"Contact Phone",
+					{"parent": contact_name, "parenttype": "Contact", "idx": 1},
+					"phone",
+				)
+	
+	# Final fallback to user email if still no contact
+	if not customer_contact:
+		user_email = frappe.session.user
+		if user_email and user_email != "Guest":
+			customer_contact = {
+				"email_id": frappe.db.get_value("User", user_email, "email"),
+				"first_name": frappe.db.get_value("User", user_email, "first_name") or "",
+				"last_name": frappe.db.get_value("User", user_email, "last_name") or "",
+			}
+	
+	# Ensure customer_contact is a dict with required keys
+	if not customer_contact:
+		customer_contact = {
+			"email_id": "",
+			"first_name": "",
+			"last_name": "",
+		}
 	payment_request = None
 	if payment_mode == PaymentMode.TELR:
 		payment_request = frappe.get_doc(
@@ -48,12 +121,12 @@ def initiate_checkout_with_mode(payment_mode: PaymentMode):
 				"currency_code": "SAR" if frappe.conf.developer_mode else quotation.currency,
 				"ref_doctype": quotation.doctype,
 				"ref_docname": quotation.name,
-				"customer_ref": quotation.party_name,
-				"customer_phone": customer_phone,
-				"customer_forenames": customer_contact.first_name,
-				"customer_surname": customer_contact.last_name,
-				"customer_email": customer_contact.email_id,
-				"customer_address": quotation.customer_address,
+				"customer_ref": quotation.party_name or "",
+				"customer_phone": customer_phone or "",
+				"customer_forenames": customer_contact.get("first_name") or "",
+				"customer_surname": customer_contact.get("last_name") or "",
+				"customer_email": customer_contact.get("email_id") or "",
+				"customer_address": quotation.customer_address or "",
 			}
 		).insert()  # TODO: check for permissions with a normal user
 
@@ -65,13 +138,51 @@ def initiate_checkout_with_mode(payment_mode: PaymentMode):
 				"currency_code": "SAR" if frappe.conf.developer_mode else quotation.currency,
 				"ref_doctype": quotation.doctype,
 				"ref_docname": quotation.name,
-				"customer_ref": quotation.party_name,
-				"customer_phone": customer_phone,
-				"customer_name": quotation.customer_name,
-				"customer_email": customer_contact.email_id,
-				"customer_address": quotation.customer_address,
+				"customer_ref": quotation.party_name or "",
+				"customer_phone": customer_phone or "",
+				"customer_name": quotation.customer_name or "",
+				"customer_email": customer_contact.get("email_id") or "",
+				"customer_address": quotation.customer_address or "",
 			}
 		).insert(ignore_permissions=True)
+
+	if payment_mode == PaymentMode.YOCO:
+		payment_request = frappe.get_doc(
+			{
+				"doctype": "Yoco Payment Request",
+				"amount": quotation.rounded_total,
+				"currency_code": "ZAR",  # Yoco only supports ZAR
+				"ref_doctype": quotation.doctype,
+				"ref_docname": quotation.name,
+				"customer_ref": quotation.party_name or "",
+				"customer_phone": customer_phone or "",
+				"customer_forenames": customer_contact.get("first_name") or "",
+				"customer_surname": customer_contact.get("last_name") or "",
+				"customer_email": customer_contact.get("email_id") or "",
+				"customer_address": quotation.customer_address or "",
+			}
+		)
+		payment_request.flags.ignore_permissions = True
+		payment_request.insert()
+
+	if payment_mode == PaymentMode.PAYFAST:
+		payment_request = frappe.get_doc(
+			{
+				"doctype": "Payfast Payment Request",
+				"amount": quotation.rounded_total,
+				"currency_code": "ZAR",  # Payfast only supports ZAR
+				"ref_doctype": quotation.doctype,
+				"ref_docname": quotation.name,
+				"customer_ref": quotation.party_name or "",
+				"customer_phone": customer_phone or "",
+				"customer_forenames": customer_contact.get("first_name") or "",
+				"customer_surname": customer_contact.get("last_name") or "",
+				"customer_email": customer_contact.get("email_id") or "",
+				"customer_address": quotation.customer_address or "",
+			}
+		)
+		payment_request.flags.ignore_permissions = True
+		payment_request.insert()
 
 	return {"payment_request": payment_request}
 
@@ -80,13 +191,94 @@ def initiate_checkout_with_mode(payment_mode: PaymentMode):
 def generate_quotation_for_cart(cart: dict):
 	if len(cart.get("items", [])) < 1:
 		frappe.throw(frappe._("Can't checkout with empty cart"))
+	
+	# Check if user is authenticated
+	current_user = frappe.session.user
+	if current_user == "Guest":
+		frappe.throw(frappe._("Please login to checkout"), frappe.PermissionError)
+	
+	# User is authenticated, proceed with cart quotation
 	cart_quotation = get_quotation_for_cart(cart)
-	remove_coupon_code()
+	# remove_coupon_code() is already called inside get_quotation_for_cart via _remove_coupon_code
+	# No need to call it again here
 	return cart_quotation
 
 
 def get_quotation_for_cart(cart: dict):
-	unsaved_quotation_doc = _get_cart_quotation()
+	# Since we already checked authentication above, we can call _get_cart_quotation directly
+	# If it raises a redirect, it might be because the user doesn't have a Customer/Contact
+	# For authenticated users, we should create a quotation manually instead of redirecting
+	try:
+		unsaved_quotation_doc = _get_cart_quotation()
+	except frappe.Redirect:
+		# User is authenticated but _get_cart_quotation raised redirect (likely missing Customer/Contact)
+		# Get or create the party/customer for the authenticated user
+		from webshop.webshop.shopping_cart.cart import get_party, get_contact_name, get_fullname, get_debtors_account
+		from webshop.webshop.doctype.webshop_settings.webshop_settings import get_shopping_cart_settings
+		from frappe.utils.nestedset import get_root_of
+		
+		user = frappe.session.user
+		contact_name = get_contact_name(user)
+		party = None
+		
+		# Try to get existing party from contact
+		if contact_name:
+			contact = frappe.get_doc("Contact", contact_name)
+			if contact.links:
+				party_doctype = contact.links[0].link_doctype
+				party = frappe.get_doc(party_doctype, contact.links[0].link_name)
+		
+		# If no party exists, create a Customer for the authenticated user
+		if not party:
+			cart_settings = get_shopping_cart_settings()
+			
+			# Create Customer
+			customer = frappe.new_doc("Customer")
+			fullname = get_fullname(user)
+			customer.update({
+				"customer_name": fullname,
+				"customer_type": "Individual",
+				"customer_group": cart_settings.default_customer_group,
+				"territory": get_root_of("Territory"),
+			})
+			customer.append("portal_users", {"user": user})
+			
+			debtors_account = get_debtors_account(cart_settings) if cart_settings.enable_checkout else ""
+			if debtors_account:
+				customer.update({"default_debit_account": debtors_account})
+			
+			customer.flags.ignore_permissions = True
+			customer.flags.ignore_mandatory = True
+			customer.insert()
+			
+			# Create Contact and link to Customer
+			contact = frappe.new_doc("Contact")
+			contact.update({
+				"first_name": frappe.get_value("User", user, "first_name") or "",
+				"last_name": frappe.get_value("User", user, "last_name") or "",
+				"email_id": frappe.get_value("User", user, "email"),
+			})
+			contact.append("links", {
+				"link_doctype": "Customer",
+				"link_name": customer.name,
+			})
+			contact.append("email_ids", {
+				"email_id": frappe.get_value("User", user, "email"),
+				"is_primary": 1,
+			})
+			contact.flags.ignore_permissions = True
+			contact.flags.ignore_mandatory = True
+			contact.insert()
+			
+			party = customer
+		
+		# Create quotation manually with the party
+		quotation = frappe.new_doc("Quotation")
+		quotation.party_name = party.name
+		quotation.order_type = "Shopping Cart"
+		quotation.quotation_to = "Customer"
+		quotation.flags.ignore_permissions = True
+		unsaved_quotation_doc = quotation
 	sale_price_list = frappe.get_cached_value("Lifestyle Settings", "Lifestyle Settings", "sale_price_list")
 	ecommerce_warehouse = frappe.get_cached_value(
 		"Lifestyle Settings", "Lifestyle Settings", "ecommerce_warehouse"
@@ -94,19 +286,41 @@ def get_quotation_for_cart(cart: dict):
 	unsaved_quotation_doc.selling_price_list = sale_price_list
 	unsaved_quotation_doc.items = []
 	for item in cart["items"]:
+		item_code = item["variant"]["item_code"]
+		item_rate = frappe.db.get_value("Item Price", {
+			"item_code": item_code,
+			"price_list": sale_price_list
+		}, "price_list_rate") or frappe.db.get_value("Item", item_code, "standard_rate") or 0
+		
 		unsaved_quotation_doc.append(
 			"items",
 			{
-				"item_code": item["variant"]["item_code"],
+				"item_code": item_code,
 				"qty": item["qty"],
 				"warehouse": ecommerce_warehouse,
+				"price_list_rate": item_rate,
+				"rate": item_rate,
 			},
 		)
+	
+	# Set missing values and calculate totals before saving
 	unsaved_quotation_doc.flags.ignore_permissions = True
+	unsaved_quotation_doc.flags.ignore_validate = True
+	unsaved_quotation_doc.run_method("set_missing_values")
+	unsaved_quotation_doc.run_method("calculate_taxes_and_totals")
+	
+	# Ensure base_grand_total is set (use 0 if still None)
+	if not unsaved_quotation_doc.base_grand_total:
+		unsaved_quotation_doc.base_grand_total = unsaved_quotation_doc.grand_total or 0
+	if not unsaved_quotation_doc.base_rounded_total:
+		unsaved_quotation_doc.base_rounded_total = unsaved_quotation_doc.rounded_total or unsaved_quotation_doc.base_grand_total
+	
 	unsaved_quotation_doc.save()
 	# Remove any existing coupon code
 	_remove_coupon_code(unsaved_quotation_doc)
 	set_charges(unsaved_quotation_doc)
+	# Final save after all calculations
+	unsaved_quotation_doc.run_method("calculate_taxes_and_totals")
 	return unsaved_quotation_doc.save()
 
 
@@ -226,6 +440,25 @@ def confirm_payment(payment_mode: PaymentMode, reference_id: str):
 
 		return payment_request
 
+	if payment_mode == PaymentMode.YOCO:
+		payment_request = frappe.get_doc("Yoco Payment Request", int(reference_id))
+		payment_request.sync_status()
+
+		if payment_request.status == "Paid":
+			quote_name = payment_request.ref_docname
+			submit_quotation_and_create_order(quote_name, payment_mode, payment_request.yoco_charge_id or payment_request.yoco_order_id)
+		return payment_request
+
+	if payment_mode == PaymentMode.PAYFAST:
+		payment_request = frappe.get_doc("Payfast Payment Request", {"m_payment_id": reference_id})
+		payment_request.sync_status()
+
+		if payment_request.status == "Complete":
+			quote_name = payment_request.ref_docname
+			submit_quotation_and_create_order(quote_name, payment_mode, payment_request.pf_payment_id or payment_request.m_payment_id)
+
+		return payment_request
+
 
 def submit_quotation_and_create_order(
 	quote_name: str, payment_mode: PaymentMode, payment_reference: str = ""
@@ -246,17 +479,31 @@ def submit_quotation_and_create_order(
 
 	if payment_mode != payment_mode.COD:
 		so.submit()
-		payment_request_doctype = (
-			"Telr Payment Request" if payment_mode == PaymentMode.TELR else "Tabby Payment Request"
-		)
-		payment_order_ref_field = "telr_order_ref" if payment_mode == PaymentMode.TELR else "tabby_order_ref"
-		payment_request = frappe.get_doc(
-			payment_request_doctype, {payment_order_ref_field: payment_reference}
-		)
-		payment_request.flags.ignore_permissions = True
-		payment_request.ref_docname = so.name
-		payment_request.ref_doctype = "Sales Order"
-		payment_request.save()
+		# Determine payment request doctype and reference field based on payment mode
+		if payment_mode == PaymentMode.TELR:
+			payment_request_doctype = "Telr Payment Request"
+			payment_order_ref_field = "telr_order_ref"
+		elif payment_mode == PaymentMode.TABBY:
+			payment_request_doctype = "Tabby Payment Request"
+			payment_order_ref_field = "tabby_order_ref"
+		elif payment_mode == PaymentMode.YOCO:
+			payment_request_doctype = "Yoco Payment Request"
+			payment_order_ref_field = "yoco_order_id"
+		elif payment_mode == PaymentMode.PAYFAST:
+			payment_request_doctype = "Payfast Payment Request"
+			payment_order_ref_field = "m_payment_id"
+		else:
+			payment_request_doctype = None
+			payment_order_ref_field = None
+
+		if payment_request_doctype and payment_order_ref_field:
+			payment_request = frappe.get_doc(
+				payment_request_doctype, {payment_order_ref_field: payment_reference}
+			)
+			payment_request.flags.ignore_permissions = True
+			payment_request.ref_docname = so.name
+			payment_request.ref_doctype = "Sales Order"
+			payment_request.save()
 		frappe.set_user("Administrator")
 		pe = get_payment_entry("Sales Order", so.name, reference_date=frappe.utils.today())
 		pe.flags.ignore_permissions = True
@@ -295,11 +542,17 @@ def _remove_coupon_code(quotation):
 		item.discount_percentage = 0
 		item.discount_amount = 0
 		item.distributed_discount_amount = 0
-		item.rate = item.price_list_rate
+		if item.price_list_rate:
+			item.rate = item.price_list_rate
 	quotation.flags.ignore_permissions = True
-	quotation.calculate_taxes_and_totals()
+	quotation.run_method("calculate_taxes_and_totals")
+	# Ensure totals are set before saving
+	if not quotation.base_grand_total:
+		quotation.run_method("set_missing_values")
+		quotation.run_method("calculate_taxes_and_totals")
 	quotation.save()
 	quotation.discount_amount = 0
+	quotation.run_method("calculate_taxes_and_totals")
 	quotation.save()
 
 
@@ -359,3 +612,27 @@ def update_delivery_charges(quotation):
 	else:
 		set_charges(quotation)
 		quotation.save(ignore_permissions=True)
+
+
+def is_yoco_configured():
+	"""Check if Yoco payment gateway is configured"""
+	try:
+		settings_list = frappe.get_all("Yoco Settings", limit=1)
+		if not settings_list:
+			return False
+		settings = frappe.get_doc("Yoco Settings", settings_list[0].name)
+		return bool(settings.public_key and settings.get_password("secret_key", raise_exception=False))
+	except Exception:
+		return False
+
+
+def is_payfast_configured():
+	"""Check if Payfast payment gateway is configured"""
+	try:
+		settings_list = frappe.get_all("Payfast Settings", limit=1)
+		if not settings_list:
+			return False
+		settings = frappe.get_doc("Payfast Settings", settings_list[0].name)
+		return bool(settings.merchant_id and settings.merchant_key)
+	except Exception:
+		return False

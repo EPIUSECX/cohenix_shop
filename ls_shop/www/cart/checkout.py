@@ -10,6 +10,7 @@ from ls_shop.utils import (
 	get_country_list,
 	get_delivery_configuration,
 )
+from ls_shop.api.payments import is_yoco_configured, is_payfast_configured
 
 # from ls_shop.api.utils import auth_required
 
@@ -28,6 +29,9 @@ def get_context(context):
 	default_price_list = lifestyle_settings.get("default_price_list")
 	context.show_telr = lifestyle_settings.get("telr_enabled", 0)
 	context.show_tabby = lifestyle_settings.get("tabby_enabled", 0)
+	# Yoco and Payfast must be both configured AND enabled in Lifestyle Settings
+	context.show_yoco = is_yoco_configured() and lifestyle_settings.get("yoco_enabled", 0)
+	context.show_payfast = is_payfast_configured() and lifestyle_settings.get("payfast_enabled", 0)
 	context.show_cod = lifestyle_settings.get("cod_enabled", 0)
 	context.cart_quotation = cart_quotation
 	context.coupon_code = get_coupon_code(cart_quotation)

@@ -15,7 +15,7 @@ def after_install():
 
 
 def create_payment_modes():
-	modes = {"Telr"}
+	modes = {"Telr", "Yoco", "Payfast"}
 
 	for mode in modes:
 		frappe.get_doc(
@@ -81,7 +81,22 @@ Best regards,
 	for template_data in email_templates:
 		if not frappe.db.exists("Email Template", template_data["name"]):
 			template = frappe.get_doc({"doctype": "Email Template", **template_data})
-			template.insert(ignore_permissions=True)
-			frappe.errprint(f"Created Email Template: {template_data['name']}")
+			# Skip all validations and hooks to avoid triggering doctype validation
+			template.flags.ignore_validate = True
+			template.flags.ignore_links = True
+			template.flags.ignore_mandatory = True
+			template.flags.ignore_permissions = True
+			# Use db_insert to bypass validation hooks
+			try:
+				template.db_insert()
+				frappe.db.commit()
+				frappe.errprint(f"Created Email Template: {template_data['name']}")
+			except Exception as template_error:
+				# If db_insert fails, try regular insert with all flags
+				template.flags.ignore_validate = True
+				template.flags.ignore_links = True
+				template.flags.ignore_mandatory = True
+				template.insert(ignore_permissions=True, ignore_validate=True, ignore_links=True)
+				frappe.errprint(f"Created Email Template: {template_data['name']}")
 		else:
 			frappe.errprint(f"Email Template '{template_data['name']}' already exists")
