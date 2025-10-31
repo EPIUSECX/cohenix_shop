@@ -524,7 +524,7 @@
                         }
                         
                         frappe_call('/api/v2/method/ls_shop.lifestyle_shop_ecommerce.doctype.yoco_payment_request.yoco_payment_request.process_yoco_payment', {
-                            payment_request: alpineData.yoco_payment_data.payment_request_name,
+                            name: alpineData.yoco_payment_data.payment_request_name,
                             yoco_token: result.id
                         }).then(function(response) {
                             console.log('[Yoco] Payment processing response:', response);
@@ -1060,7 +1060,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     }
                                     
                                     frappe_call('/api/v2/method/ls_shop.lifestyle_shop_ecommerce.doctype.yoco_payment_request.yoco_payment_request.process_yoco_payment', {
-                                        payment_request: alpineData.yoco_payment_data.payment_request_name,
+                                        name: alpineData.yoco_payment_data.payment_request_name,
                                         yoco_token: result.id
                                     }).then(function(response) {
                                         console.log('[Yoco] Payment processing response:', response);

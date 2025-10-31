@@ -164,81 +164,77 @@ class YocoPaymentRequest(Document):
 			)
 			frappe.throw(frappe._("Failed to sync status from Yoco: {0}").format(str(e)))
 
-
-@frappe.whitelist()
-def process_yoco_payment(payment_request, yoco_token):
-	"""Process Yoco payment token from inline SDK - create charge via API"""
-	import requests
-	
-	# Load the payment request document
-	payment_request_doc = frappe.get_doc("Yoco Payment Request", payment_request)
-	
-	yoco_settings = payment_request_doc.get_yoco_settings()
-	secret_key = yoco_settings.get_password("secret_key", raise_exception=False)
-	
-	if not secret_key:
-		frappe.throw(frappe._("Yoco Secret Key not configured"))
-	
-	# Charge the payment using the token from Yoco SDK
-	# Yoco API: POST /api/v1/charges with token
-	api_url = "https://payments.yoco.com/api/v1/charges"
-	
-	payload = {
-		"amount": int(float(payment_request_doc.amount) * 100),  # Convert to cents
-		"currency": payment_request_doc.currency_code or "ZAR",
-		"token": yoco_token,
-		"metadata": {
-			"payment_request": payment_request_doc.name,
-			"reference_doctype": payment_request_doc.ref_doctype,
-			"reference_docname": payment_request_doc.ref_docname
+	@frappe.whitelist()
+	def process_yoco_payment(self, yoco_token):
+		"""Process Yoco payment token from inline SDK - create charge via API"""
+		import requests
+		
+		yoco_settings = self.get_yoco_settings()
+		secret_key = yoco_settings.get_password("secret_key", raise_exception=False)
+		
+		if not secret_key:
+			frappe.throw(frappe._("Yoco Secret Key not configured"))
+		
+		# Charge the payment using the token from Yoco SDK
+		# Yoco API: POST /api/v1/charges with token
+		api_url = "https://payments.yoco.com/api/v1/charges"
+		
+		payload = {
+			"amount": int(float(self.amount) * 100),  # Convert to cents
+			"currency": self.currency_code or "ZAR",
+			"token": yoco_token,
+			"metadata": {
+				"payment_request": self.name,
+				"reference_doctype": self.ref_doctype,
+				"reference_docname": self.ref_docname
+			}
 		}
-	}
-	
-	headers = {
-		"Authorization": f"Bearer {secret_key}",
-		"Content-Type": "application/json"
-	}
-	
-	try:
-		response = requests.post(api_url, json=payload, headers=headers, timeout=30)
-		response.raise_for_status()
-		charge_data = response.json()
 		
-		# Update payment request with charge details
-		payment_request_doc.yoco_charge_id = charge_data.get("id")
-		charge_status = charge_data.get("status", "").lower()
-		if charge_status == "succeeded":
-			payment_request_doc.status = "Paid"
-		elif charge_status == "failed":
-			payment_request_doc.status = "Failed"
-		else:
-			payment_request_doc.status = "Pending"
+		headers = {
+			"Authorization": f"Bearer {secret_key}",
+			"Content-Type": "application/json"
+		}
 		
-		payment_request_doc.payment_method = charge_data.get("source", {}).get("type")
-		payment_request_doc.save()
-		
-		# Process payment confirmation if successful
-		if payment_request_doc.status == "Paid":
-			from ls_shop.api.payments import confirm_payment
-			confirm_payment(payment_request_doctype="Yoco Payment Request", payment_request_name=payment_request_doc.name)
+		try:
+			response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+			response.raise_for_status()
+			charge_data = response.json()
 			
-			# Return redirect URL
-			quotation = frappe.get_doc(payment_request_doc.ref_doctype, payment_request_doc.ref_docname)
-			return {
-				"redirect_to": f"/{frappe.local.lang}/account/orders/confirmation?payment_request={payment_request_doc.name}&quotation={quotation.name}",
-				"status": "success"
-			}
-		else:
-			return {
-				"redirect_to": f"/payment-failed?payment_request={payment_request_doc.name}",
-				"status": "failed"
-			}
-		
-	except requests.exceptions.RequestException as e:
-		error_response = response.text if 'response' in locals() else 'No response'
-		frappe.log_error(
-			f"Yoco payment processing failed: {str(e)}\nResponse: {error_response}",
-			"Yoco Payment Processing Error"
-		)
-		frappe.throw(frappe._("Failed to process Yoco payment: {0}").format(str(e)))
+			# Update payment request with charge details
+			self.yoco_charge_id = charge_data.get("id")
+			charge_status = charge_data.get("status", "").lower()
+			if charge_status == "succeeded":
+				self.status = "Paid"
+			elif charge_status == "failed":
+				self.status = "Failed"
+			else:
+				self.status = "Pending"
+			
+			self.payment_method = charge_data.get("source", {}).get("type")
+			self.save()
+			
+			# Process payment confirmation if successful
+			if self.status == "Paid":
+				from ls_shop.api.payments import confirm_payment
+				confirm_payment(payment_request_doctype="Yoco Payment Request", payment_request_name=self.name)
+				
+				# Return redirect URL
+				quotation = frappe.get_doc(self.ref_doctype, self.ref_docname)
+				return {
+					"redirect_to": f"/{frappe.local.lang}/account/orders/confirmation?payment_request={self.name}&quotation={quotation.name}",
+					"status": "success"
+				}
+			else:
+				return {
+					"redirect_to": f"/payment-failed?payment_request={self.name}",
+					"status": "failed"
+				}
+			
+		except requests.exceptions.RequestException as e:
+			error_response = response.text if 'response' in locals() else 'No response'
+			frappe.log_error(
+				f"Yoco payment processing failed: {str(e)}\nResponse: {error_response}",
+				"Yoco Payment Processing Error"
+			)
+			frappe.throw(frappe._("Failed to process Yoco payment: {0}").format(str(e)))
 
